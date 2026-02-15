@@ -346,6 +346,7 @@ def fetch_resource_list(tmdb_id, media_type='movie', specific_source=None, seaso
     if not any(filters.values()): return all_resources
         
     filtered_list = [res for res in all_resources if _is_resource_valid(res, filters, media_type)]
+    logger.info(f"  ➜ 资源过滤: 原始 {len(all_resources)} -> 过滤后 {len(filtered_list)}")
     return filtered_list
 
 # ==============================================================================
