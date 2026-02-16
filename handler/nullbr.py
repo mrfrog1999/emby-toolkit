@@ -409,7 +409,7 @@ def fetch_resource_list(tmdb_id, media_type='movie', specific_source=None, seaso
     
     # 配额检查
     if _user_level_cache.get('daily_quota', 0) > 0 and _user_level_cache.get('daily_used', 0) >= _user_level_cache.get('daily_quota', 0):
-        logger.warning(f"  ⚠️ 今日配额已用完，跳过请求")
+        logger.warning(f"  ⚠️ 今日配额已用完，无法请求API搜索资源。")
         raise Exception("今日 API 配额已用完，请明日再试或升级套餐。")
 
     all_resources = []
