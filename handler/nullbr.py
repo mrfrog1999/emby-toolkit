@@ -144,7 +144,9 @@ def _is_resource_valid(item, filters, media_type='movie', episode_count=0):
         elif 'mp4' in title or link.endswith('.mp4'): ext = 'mp4'
         elif 'iso' in title or link.endswith('.iso'): ext = 'iso'
         elif 'ts' in title or link.endswith('.ts'): ext = 'ts'
-        if not ext or ext not in allowed_containers: return False
+        if not ext or ext not in allowed_containers: 
+            logger.debug(f"  ➜ 资源《{item.get('title')}》被过滤掉了，因为容器 {ext} 不在允许列表中")
+            return False
 
     return True
 
