@@ -71,7 +71,6 @@
 | `moviepilot_url` | 服务地址 |
 | `moviepilot_username` | 用户名 |
 | `moviepilot_password` | 密码 |
-| `autosub_enabled` | 智能订阅总开关 |
 | `resubscribe_daily_cap` | 每日订阅上限 |
 | `resubscribe_delay_seconds` | 订阅请求间隔 |
 

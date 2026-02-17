@@ -555,13 +555,6 @@
                         </n-form-item-grid-item>
                       </n-gi>
 
-                      <n-gi span="1 m:2">
-                        <n-form-item-grid-item label="启用智能订阅" path="autosub_enabled">
-                          <n-switch v-model:value="configModel.autosub_enabled" :disabled="!isMoviePilotConfigured" />
-                          <template #feedback><n-text depth="3" style="font-size:0.8em;">总开关。开启后定时任务才会执行。</n-text></template>
-                        </n-form-item-grid-item>
-                      </n-gi>
-
                       <!-- 分割线 -->
                       <n-gi span="1 m:2">
                         <n-divider title-placement="left" style="margin: 10px 0 20px 0;">每日订阅额度</n-divider>

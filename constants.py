@@ -118,7 +118,6 @@ CONFIG_OPTION_MOVIEPILOT_URL = "moviepilot_url"
 CONFIG_OPTION_MOVIEPILOT_USERNAME = "moviepilot_username"
 CONFIG_OPTION_MOVIEPILOT_PASSWORD = "moviepilot_password"
 # --- 智能订阅相关配置 ---
-CONFIG_OPTION_AUTOSUB_ENABLED = "autosub_enabled" # 智能订阅总开关
 CONFIG_OPTION_RESUBSCRIBE_DAILY_CAP = "resubscribe_daily_cap"
 CONFIG_OPTION_RESUBSCRIBE_DELAY_SECONDS = "resubscribe_delay_seconds"
 

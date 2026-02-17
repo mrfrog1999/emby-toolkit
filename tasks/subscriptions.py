@@ -410,23 +410,21 @@ def task_auto_subscribe(processor):
     movie_search_window = int(strategy_config.get('movie_search_window_days', 1))     # 默认搜索1天
     movie_pause_days = int(strategy_config.get('movie_pause_days', 7))                # 默认暂停7天
     timeout_revive_days = int(strategy_config.get('timeout_revive_days', 0))          # 默认不复活超时订阅
-    enable_nullbr_fallback = strategy_config.get('enable_nullbr_fallback', False)     # 默认不启用 NULLBR 兜底
-    nullbr_priority = strategy_config.get('nullbr_priority', 'mp')                    # 默认 MP 优先
+    enable_nullbr = strategy_config.get('enable_nullbr', False)                       # 默认不启用 NULLBR 
+    enable_mp = strategy_config.get('enable_mp', True)                                # 默认启用 MP 订阅
+    sub_priority = strategy_config.get('sub_priority', 'mp')                          # 默认 MP 优先
     
     # 2. 读取请求延迟配置
     try:
         request_delay = int(config.get(constants.CONFIG_OPTION_RESUBSCRIBE_DELAY_SECONDS, 0))
     except:
         request_delay = 0
-    
-    # 获取 MoviePilot 订阅开关
-    mp_sub_enabled = config.get(constants.CONFIG_OPTION_AUTOSUB_ENABLED)
 
     try:
         # ======================================================================
         # 阶段 1 - 清理超时订阅 
         # ======================================================================
-        if mp_sub_enabled and movie_search_window > 0:
+        if enable_mp and movie_search_window > 0:
             logger.info(f"  ➜ 正在检查超过 {movie_search_window} 天仍未入库的订阅...")
             task_manager.update_status_from_thread(2, "正在清理超时订阅...")
             
@@ -455,7 +453,7 @@ def task_auto_subscribe(processor):
                     is_fallback_success = False
 
                     # ★★★ NULLBR 兜底逻辑 ★★★
-                    if enable_nullbr_fallback and item_type == 'Movie':
+                    if enable_nullbr and item_type == 'Movie':
                         logger.info(f"  🚑 尝试对《{title}》执行 NULLBR 兜底搜索...")
                         if nullbr_handler.auto_download_best_resource(tmdb_id_to_cancel, 'movie', title):
                             logger.info(f"  ✅ 《{title}》NULLBR 兜底推送成功！")
@@ -540,7 +538,7 @@ def task_auto_subscribe(processor):
         # 阶段 2 - 电影间歇性订阅搜索
         # ======================================================================
         # 仅当配置有效时执行
-        if mp_sub_enabled and movie_protection_days > 0 and movie_pause_days > 0:
+        if enable_mp and movie_protection_days > 0 and movie_pause_days > 0:
             logger.info(f"  ➜ [策略] 执行电影间歇性订阅搜索维护...")
             
             # 2.1 复活 (Revive: PAUSED -> SUBSCRIBED)
@@ -707,7 +705,7 @@ def task_auto_subscribe(processor):
 
             # 决定是否使用 NULLBR  
             use_nullbr = False
-            if enable_nullbr_fallback and nullbr_priority == 'nullbr':
+            if enable_nullbr and sub_priority == 'nullbr':
                 # 检查完结状态
                 proceed_with_nullbr = True
                 if item_type in ['Series', 'Season']:
@@ -745,7 +743,7 @@ def task_auto_subscribe(processor):
                     request_db.set_media_status_ignored(
                         tmdb_ids=[tmdb_id],
                         item_type=item_type,
-                        source={"type": "nullbr_priority", "reason": "downloaded_by_nullbr"},
+                        source={"type": "sub_priority", "reason": "downloaded_by_nullbr"},
                         ignore_reason="NULLBR直下"
                     )
                     subscription_details.append({'source': 'NULLBR', 'item': f"{title} (直下)"})
@@ -757,7 +755,7 @@ def task_auto_subscribe(processor):
                 continue
 
             # --- MoviePilot 订阅 ---
-            if not mp_sub_enabled:
+            if not enable_mp:
                 logger.debug(f"  ➜ MP订阅开关关闭，跳过《{title}》的 MP 流程。")
                 continue
 

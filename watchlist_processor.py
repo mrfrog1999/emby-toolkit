@@ -796,8 +796,6 @@ class WatchlistProcessor:
                 
                 # --- B. 自动补订逻辑 ---
                 if not exists:
-                    if not self.config.get(constants.CONFIG_OPTION_AUTOSUB_ENABLED):
-                        return
                     # 只有【最新季】才允许自动补订
                     # 逻辑：S1-S3 没了就没了，不补；S4(最新) 没了必须补回来，因为要追更。
                     if s_num == latest_season_num:
