@@ -280,6 +280,7 @@
         <n-alert type="info" :show-icon="false" style="margin-bottom: 16px;">
           <li>新片，采用“搜索 N 天 -> 暂停 M 天”的循环机制，大幅降低 MoviePilot 搜索压力。</li>
           <li>老片，采用“搜索 N 天 -> NULLBR -> 取消订阅”</li>
+          <li>仅使用 NULLBR 时，请勿把统一订阅处理任务执行间隔小于8小时，以免封号</li>
         </n-alert>
 
         <!-- 订阅源配置置顶 -->
@@ -304,7 +305,7 @@
                    <span style="margin-right: 12px; font-weight: 500; flex-shrink: 0;">优先模式</span>
                    <n-radio-group v-model:value="strategyConfig.sub_priority" name="sub_priority_group">
                       <n-space>
-                         <n-radio value="mp">MP 优先 (默认)</n-radio>
+                         <n-radio value="mp">MP 优先</n-radio>
                          <n-radio value="nullbr">NULLBR 优先</n-radio>
                       </n-space>
                    </n-radio-group>
