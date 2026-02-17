@@ -114,7 +114,7 @@ def _is_resource_valid(item, filters, media_type='movie', episode_count=0):
         if media_type == 'tv' and episode_count > 0:
             check_size = size_gb / episode_count
             # 调试日志 (可选开启)
-            logger.debug(f"  [大小检查] 总大小: {size_gb}G, 集数: {episode_count}, 平均: {check_size:.2f}G (限制: {min_size}-{max_size})")
+            # logger.debug(f"  [大小检查] 总大小: {size_gb}G, 集数: {episode_count}, 平均: {check_size:.2f}G (限制: {min_size}-{max_size})")
 
         if min_size > 0 and check_size < min_size:
             logger.debug(f"  ➜ 资源《{item.get('title')}》被过滤掉了，因为大小 {check_size:.2f}G 小于最小限制 {min_size}G")

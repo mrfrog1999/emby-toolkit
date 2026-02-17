@@ -289,7 +289,8 @@
                 <n-empty v-if="!searchResults.length && !searching" description="暂无数据" />
                 <div class="responsive-grid">
                   <div v-for="item in searchResults" :key="item.id" class="grid-item">
-                      <MediaCard :item="item" :loading="loadingResourcesId === item.id" @click="openResourceModal(item)" />
+                      <!-- ★★★ 修改：点击事件调用 handleResourceClick ★★★ -->
+                      <MediaCard :item="item" :loading="loadingResourcesId === item.id" @click="handleResourceClick(item)" />
                   </div>
                 </div>
              </n-spin>
@@ -306,7 +307,8 @@
               <div v-if="listItems.length > 0">
                 <div class="responsive-grid">
                   <div v-for="item in listItems" :key="item.id" class="grid-item">
-                    <MediaCard :item="item" :loading="loadingResourcesId === item.id" @click="openResourceModal(item)" />
+                    <!-- ★★★ 修改：点击事件调用 handleResourceClick ★★★ -->
+                    <MediaCard :item="item" :loading="loadingResourcesId === item.id" @click="handleResourceClick(item)" />
                   </div>
                 </div>
                 <div style="display: flex; justify-content: center; margin-top: 20px; margin-bottom: 20px;">
@@ -320,6 +322,40 @@
         </n-layout>
       </n-tab-pane>
     </n-tabs>
+
+    <!-- ★★★ 新增：季选择模态框 (从 DiscoverPage 复制并适配) ★★★ -->
+    <n-modal v-model:show="showSeasonModal" preset="card" title="选择要搜索的季" style="width: 400px; max-width: 90%;">
+      <n-spin :show="loadingSeasons">
+        <div v-if="seasonList.length === 0 && !loadingSeasons" style="text-align: center; color: #888; padding: 20px;">
+          未找到季信息，将搜索整剧
+          <div style="margin-top: 10px;">
+             <n-button size="small" @click="selectSeasonAndSearch(null)">直接搜索整剧</n-button>
+          </div>
+        </div>
+        
+        <n-space vertical v-else>
+          <!-- 搜索整剧按钮 -->
+          <n-button block secondary style="justify-content: space-between;" @click="selectSeasonAndSearch(null)">
+            <span>搜索整剧 (所有季)</span>
+          </n-button>
+          <n-divider style="margin: 4px 0;" />
+          
+          <!-- 分季列表 -->
+          <n-button 
+            v-for="season in seasonList" 
+            :key="season.id" 
+            block 
+            secondary
+            style="justify-content: space-between; height: auto; padding: 10px;"
+            @click="selectSeasonAndSearch(season)"
+          >
+            <span>{{ season.name }}</span>
+            <n-tag size="small" :bordered="false" type="info">{{ season.episode_count }} 集</n-tag>
+          </n-button>
+        </n-space>
+      </n-spin>
+    </n-modal>
+
     <!-- 购买套餐模态框 -->
     <n-modal v-model:show="showBuyModal" style="width: 900px; max-width: 95%;">
       <n-card :bordered="false" size="huge" role="dialog" aria-modal="true" style="background: #1a1a1a; color: #fff;">
@@ -403,7 +439,6 @@
                   <div class="step-text">输入兑换码点击兑换，1-2分钟生效</div>
                 </div>
                 
-                <!-- 替换成你的 TG 链接 -->
                 <n-button type="primary" size="large" tag="a" href="https://t.me/hbq0405" target="_blank" style="margin-top: 20px;">
                   <template #icon><n-icon><PaperPlaneIcon /></n-icon></template>
                   联系 TG 发货
@@ -507,12 +542,10 @@ const refreshUserInfo = async () => {
         const res = await axios.get('/api/nullbr/user/info');
         if (res.data && res.data.data) {
             userProfile.value = res.data.data;
-            // 成功获取后清除错误提示（如果有状态变量控制的话）
         }
     } catch (e) {
         userProfile.value = null;
         const errMsg = e.response?.data?.message || e.message;
-        // 如果是 401/403，说明 Key 错；如果是 500，可能是网络问题
         if (e.response?.status === 401 || e.response?.status === 403) {
              message.error("API Key 无效，请检查");
         } else {
@@ -670,9 +703,63 @@ const mapApiItemToUi = (item) => ({
 const nullbrModalRef = ref(null);
 const loadingResourcesId = ref(null);
 
-const openResourceModal = (item) => {
+// ★★★ 新增：季选择相关状态 ★★★
+const showSeasonModal = ref(false);
+const loadingSeasons = ref(false);
+const seasonList = ref([]);
+const currentSeriesForSearch = ref(null);
+
+// ★★★ 新增/修改：处理卡片点击，区分电影和剧集 ★★★
+const handleResourceClick = async (item) => {
+  // 1. 如果是电影，直接打开搜索
+  if (item.media_type === 'movie') {
+    if (nullbrModalRef.value) {
+      nullbrModalRef.value.open(item);
+    }
+    return;
+  }
+
+  // 2. 如果是剧集，先弹出季选择框
+  currentSeriesForSearch.value = item;
+  showSeasonModal.value = true;
+  loadingSeasons.value = true;
+  seasonList.value = [];
+
+  try {
+    // 调用 TMDB 接口获取季信息 (确保后端存在 /api/discover/tmdb/tv/{id} 接口)
+    // item.tmdb_id 是我们在 mapApiItemToUi 中映射的字段
+    const res = await axios.get(`/api/discover/tmdb/tv/${item.tmdb_id}`);
+    
+    if (res.data && res.data.seasons) {
+      // 过滤掉第0季(特别篇)，并按季号排序
+      seasonList.value = res.data.seasons
+        .filter(s => s.season_number > 0)
+        .sort((a, b) => a.season_number - b.season_number);
+    }
+  } catch (e) {
+    message.warning("获取季信息失败，将搜索整剧");
+    // 如果获取失败，仍然保持 Modal 打开，让用户可以选择“搜索整剧”
+    seasonList.value = [];
+  } finally {
+    loadingSeasons.value = false;
+  }
+};
+
+// ★★★ 新增：选中季后触发搜索 ★★★
+const selectSeasonAndSearch = (season) => {
+  showSeasonModal.value = false;
+  
+  if (!currentSeriesForSearch.value) return;
+  
   if (nullbrModalRef.value) {
-    nullbrModalRef.value.open(item);
+    // 构造一个新的对象传给搜索组件，带上 season_number
+    const searchItem = {
+      ...currentSeriesForSearch.value,
+      // ★ 关键：如果选了季，传入 season_number；没选(null)则不传
+      season_number: season ? season.season_number : null 
+    };
+    
+    nullbrModalRef.value.open(searchItem);
   }
 };
 
