@@ -3,7 +3,7 @@ import logging
 import requests
 import re
 import time  
-import threading 
+import os 
 from datetime import datetime
 from database import settings_db, media_db, request_db
 import config_manager
@@ -684,38 +684,125 @@ class SmartOrganizer:
         return None
 
     def _extract_video_info(self, filename):
-        """从文件名提取视频信息 (分辨率, 来源, 编码, HDR)"""
-        info = []
+        """
+        从文件名提取视频信息 (来源 · 分辨率 · 编码 · 音频 · 制作组)
+        参考格式: BluRay · 1080p · X264 · DDP 7.1 · CMCT
+        """
+        info_tags = []
         name_upper = filename.upper()
         
-        # 分辨率
-        if '2160P' in name_upper or '4K' in name_upper: info.append('2160p')
-        elif '1080P' in name_upper: info.append('1080p')
-        elif '720P' in name_upper: info.append('720p')
+        # 1. 来源/质量 (Source)
+        source = ""
+        if re.search(r'REMUX', name_upper): source = 'Remux'
+        elif re.search(r'BLU-?RAY|BD', name_upper): source = 'BluRay'
+        elif re.search(r'WEB-?DL', name_upper): source = 'WEB-DL'
+        elif re.search(r'WEB-?RIP', name_upper): source = 'WEBRip'
+        elif re.search(r'HDTV', name_upper): source = 'HDTV'
+        elif re.search(r'DVD', name_upper): source = 'DVD'
         
-        # 来源/质量
-        if 'REMUX' in name_upper: info.append('Remux')
-        elif 'BLURAY' in name_upper or 'BLU-RAY' in name_upper: info.append('BluRay')
-        elif 'WEB-DL' in name_upper or 'WEBDL' in name_upper: info.append('WEB-DL')
-        elif 'HDTV' in name_upper: info.append('HDTV')
+        # 2. 特效 (Effect: HDR/DV)
+        effect = ""
+        is_dv = re.search(r'\b(DV|DOVI|DOLBY\s?VISION)\b', name_upper)
+        is_hdr = re.search(r'\b(HDR|HDR10\+?)\b', name_upper)
         
-        # 编码
-        if 'H265' in name_upper or 'HEVC' in name_upper or 'X265' in name_upper: info.append('HEVC')
-        elif 'H264' in name_upper or 'AVC' in name_upper or 'X264' in name_upper: info.append('AVC')
+        if is_dv and is_hdr: effect = "HDR" # 通常文件名写 WEB-DL HDR DV，这里简化显示，或者组合
+        elif is_dv: effect = "DV"
+        elif is_hdr: effect = "HDR"
+        
+        # 组合 Source 和 Effect (如 WEB-DL HDR)
+        if source:
+            info_tags.append(f"{source} {effect}".strip())
+        elif effect:
+            info_tags.append(effect)
 
-        # 特效
-        if 'HDR' in name_upper: info.append('HDR')
-        if 'DOLBY' in name_upper or 'DOVI' in name_upper or 'DV' in name_upper: info.append('DV')
+        # 3. 分辨率 (Resolution)
+        res_match = re.search(r'(2160|1080|720|480)[pP]', filename)
+        if res_match:
+            info_tags.append(res_match.group(0).lower())
+        elif '4K' in name_upper:
+            info_tags.append('2160p')
+
+        # 4. 编码 (Codec)
+        if re.search(r'[HX]265|HEVC', name_upper): info_tags.append('H265')
+        elif re.search(r'[HX]264|AVC', name_upper): info_tags.append('H264')
+        elif re.search(r'AV1', name_upper): info_tags.append('AV1')
+        elif re.search(r'MPEG-?2', name_upper): info_tags.append('MPEG2')
+
+        # 5. 音频 (Audio)
+        audio_info = []
+        # 音频编码
+        if re.search(r'ATMOS', name_upper): audio_info.append('Atmos')
+        elif re.search(r'TRUEHD', name_upper): audio_info.append('TrueHD')
+        elif re.search(r'DTS-?HD(\s?MA)?', name_upper): audio_info.append('DTS-HD')
+        elif re.search(r'DTS', name_upper): audio_info.append('DTS')
+        elif re.search(r'DDP|EAC3|DOLBY\s?DIGITAL\+', name_upper): audio_info.append('DDP')
+        elif re.search(r'AC3|DD', name_upper): audio_info.append('AC3')
+        elif re.search(r'AAC', name_upper): audio_info.append('AAC')
+        elif re.search(r'FLAC', name_upper): audio_info.append('FLAC')
         
-        return " - ".join(info) if info else ""
+        # 声道
+        chan_match = re.search(r'\b(7\.1|5\.1|2\.0)\b', filename)
+        if chan_match:
+            audio_info.append(chan_match.group(1))
+            
+        if audio_info:
+            info_tags.append(" ".join(audio_info))
+
+        # 6. 发布组 (Release Group) - 调用 helpers.RELEASE_GROUPS
+        # 逻辑：遍历所有正则，如果匹配到，提取文件名中的原始字符串
+        group_found = False
+        for group_key, patterns in utils.RELEASE_GROUPS.items() if hasattr(utils, 'RELEASE_GROUPS') else {}.items():
+             # 注意：这里假设 helpers 被 import 为 utils 或者 helpers，根据文件头 import 情况调整
+             # 原文件 import utils, 但 RELEASE_GROUPS 在 helpers.py。
+             # 如果 nullbr.py 没有 import helpers，需要确保能访问到。
+             # 假设 helpers.py 的内容在 helpers 模块中，或者被 utils 引用。
+             # 既然你提供了 helpers.py，且 nullbr.py 头部没有 import helpers，
+             # **请确保在 nullbr.py 头部添加: import handler.helpers as helpers 或 from tasks import helpers**
+             pass
+
+        # 修正：直接使用 helpers 模块 (需要在文件头 import tasks.helpers as helpers)
+        # 考虑到原文件结构，这里尝试从 helpers 匹配
+        try:
+            from tasks import helpers # 延迟导入防止循环引用，或者放在文件头
+            for group_name, patterns in helpers.RELEASE_GROUPS.items():
+                for pattern in patterns:
+                    try:
+                        # 使用正则查找文件名中的组名
+                        match = re.search(pattern, filename, re.IGNORECASE)
+                        if match:
+                            # 匹配到了，保留文件名中的原始写法 (match.group(0))
+                            info_tags.append(match.group(0))
+                            group_found = True
+                            break
+                    except: pass
+                if group_found: break
+            
+            # 如果没在字典里找到，尝试匹配常见的 -Group 结尾
+            if not group_found:
+                # 匹配文件名末尾的 -Group (如 -CMCT.mkv)
+                # 去掉扩展名
+                name_no_ext = os.path.splitext(filename)[0]
+                match_suffix = re.search(r'-([a-zA-Z0-9]+)$', name_no_ext)
+                if match_suffix:
+                    possible_group = match_suffix.group(1)
+                    # 排除常见非组名后缀
+                    if len(possible_group) > 2 and possible_group.upper() not in ['1080P', '2160P', '4K', 'HDR', 'H265', 'H264']:
+                        info_tags.append(possible_group)
+        except ImportError:
+            pass
+
+        return " · ".join(info_tags) if info_tags else ""
 
     def _rename_file_node(self, file_node, new_base_name, is_tv=False):
         """重命名单个文件节点"""
-        ext = file_node.get('n', '').split('.')[-1]
         original_name = file_node.get('n', '')
+        ext = original_name.split('.')[-1]
         
+        # 提取标签信息
         video_info = self._extract_video_info(original_name)
-        suffix = f" - {video_info}" if video_info else ""
+        
+        # 构造后缀：注意这里使用 " · " 作为分隔符
+        suffix = f" · {video_info}" if video_info else ""
         
         if is_tv:
             # 剧集：尝试提取 SxxExx
@@ -730,14 +817,16 @@ class SmartOrganizer:
                 # 格式化为 S01E01
                 s_str = f"S{season_num:02d}"
                 e_str = f"E{episode_num:02d}"
-                new_name = f"{new_base_name} {s_str}{e_str}{suffix}.{ext}"
+                
+                # 剧集格式：Title - S01E01 · Tags.ext
+                new_name = f"{new_base_name} - {s_str}{e_str}{suffix}.{ext}"
                 
                 return new_name, season_num
             else:
                 # 没匹配到集数，不改名
                 return original_name, None
         else:
-            # 电影
+            # 电影格式：Title (Year) · Tags.ext
             new_name = f"{new_base_name}{suffix}.{ext}"
             return new_name, None
 
@@ -788,15 +877,36 @@ class SmartOrganizer:
                         self.client.fs_delete([fid])
                         continue
                         
-                    # 额外检查：如果是视频文件但极小 (<100MB)，视为 Sample/广告，删除
-                    # size 字段是字符串 "622.05KB"，需要解析。这里简单判断，如果单位是 KB/MB 且数值小
+                    # 2. 额外检查：如果是视频文件但极小 (<100MB)，视为 Sample/广告，删除
                     if is_video:
-                        size_str = str(sub_file.get('size', '')).upper()
-                        if 'KB' in size_str: # KB 级别的视频肯定是垃圾
-                            logger.info(f"  🗑️ [整理] 删除过小视频(Sample): {file_name}")
+                        should_delete = False
+                        raw_size = sub_file.get('size')
+                        
+                        try:
+                            # 情况1: API返回的是字节整数 (int)
+                            if isinstance(raw_size, (int, float)):
+                                if raw_size < 100 * 1024 * 1024: # 100MB in bytes
+                                    should_delete = True
+                            
+                            # 情况2: API返回的是格式化字符串 (str) 如 "32.98MB", "600KB"
+                            elif isinstance(raw_size, str):
+                                s_upper = raw_size.upper().replace(',', '')
+                                if 'GB' in s_upper or 'TB' in s_upper:
+                                    should_delete = False # 大文件肯定保留
+                                elif 'KB' in s_upper or 'BYTES' in s_upper: 
+                                    should_delete = True  # KB级别肯定删
+                                elif 'MB' in s_upper:
+                                    # 提取数字部分进行判断
+                                    match = re.search(r'([\d\.]+)', s_upper)
+                                    if match and float(match.group(1)) < 100: # 阈值 100MB
+                                        should_delete = True
+                        except Exception:
+                            pass # 解析失败保守起见不删
+
+                        if should_delete:
+                            logger.info(f"  🗑️ [整理] 删除过小视频(Sample/广告, Size={raw_size}): {file_name}")
                             self.client.fs_delete([fid])
                             continue
-                        # MB 级别稍微复杂点，暂不误删，保留
                     
                     # --- B. 视频文件重命名 ---
                     if is_video:

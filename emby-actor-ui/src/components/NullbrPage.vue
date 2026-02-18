@@ -515,7 +515,7 @@
         </n-form-item>
         <n-form-item label="目标 CID">
           <n-input v-model:value="currentRule.cid" placeholder="115 文件夹 ID (例如: 12345678)" />
-          <template #feedback>请在 115 网页版进入文件夹，URL 最后的数字即为 CID</template>
+          <template #feedback>请在 115 网页版进入文件夹，URL 里的数字即为 CID</template>
         </n-form-item>
         
         <n-divider title-placement="left" style="font-size: 12px; color: #999;">匹配条件 (满足所有勾选条件时命中)</n-divider>
@@ -528,20 +528,20 @@
           </n-radio-group>
         </n-form-item>
 
-        <n-form-item label="类型 (Genres)">
-          <n-select v-model:value="currentRule.genres" multiple filterable :options="genreOptions" placeholder="包含任一类型即可" />
+        <n-form-item label="类型/风格">
+          <n-select v-model:value="currentRule.genres" multiple filterable :options="computedGenreOptions" placeholder="包含任一类型即可" />
         </n-form-item>
         
         <n-form-item label="国家/地区">
           <n-select v-model:value="currentRule.countries" multiple filterable :options="countryOptions" placeholder="包含任一国家即可" />
         </n-form-item>
 
-        <n-form-item label="语言">
+        <n-form-item label="原始语言">
           <n-select v-model:value="currentRule.languages" multiple filterable :options="languageOptions" placeholder="包含任一语言即可" />
         </n-form-item>
 
-        <n-form-item label="工作室/平台">
-          <n-select v-model:value="currentRule.studios" multiple filterable :options="studioOptions" placeholder="包含任一工作室即可 (如: 漫威, Netflix)" />
+        <n-form-item label="工作室">
+          <n-select v-model:value="currentRule.studios" multiple filterable :options="computedStudioOptions" placeholder="包含任一工作室即可 (如: 漫威, 迪斯尼" />
         </n-form-item>
 
         <n-form-item label="关键词">
@@ -861,12 +861,42 @@ const showRuleModal = ref(false);
 const currentRule = ref({});
 
 // 选项数据
-const genreOptions = ref([]); 
+const rawMovieGenres = ref([]); // 电影类型原始数据
+const rawTvGenres = ref([]);    // 剧集类型原始数据
+const rawStudios = ref([]);     // 工作室原始数据 (带类型标记)
+
 const countryOptions = ref([]); 
 const languageOptions = ref([]);
-const studioOptions = ref([]);
 const keywordOptions = ref([]);
 const ratingOptions = ref([]);
+
+// 1. 动态类型 (Genres) 选项
+const computedGenreOptions = computed(() => {
+  const type = currentRule.value.media_type; // 'all', 'movie', 'tv'
+  
+  if (type === 'movie') {
+    return rawMovieGenres.value;
+  } else if (type === 'tv') {
+    return rawTvGenres.value;
+  } else {
+    // 'all': 合并去重
+    const map = new Map();
+    [...rawMovieGenres.value, ...rawTvGenres.value].forEach(g => map.set(g.value, g));
+    return Array.from(map.values());
+  }
+});
+
+// 2. 动态工作室 (Studios) 选项
+const computedStudioOptions = computed(() => {
+  const type = currentRule.value.media_type;
+  
+  return rawStudios.value.filter(item => {
+    if (type === 'all') return true;
+    if (type === 'movie') return item.is_movie; // 仅显示有 company_ids 的
+    if (type === 'tv') return item.is_tv;       // 仅显示有 network_ids 的
+    return true;
+  });
+});
 
 // 加载规则
 const loadSortingRules = async () => {
@@ -1028,33 +1058,41 @@ onMounted(async () => {
     loadSortingRules();
     
     try {
-        // ★★★ 修复 2: 类型选项的 value 改为 ID ★★★
+        // ★★★ 修改：分别获取并存储电影和剧集的类型 ★★★
         const [mGenres, tGenres] = await Promise.all([
              axios.get('/api/custom_collections/config/tmdb_movie_genres'),
              axios.get('/api/custom_collections/config/tmdb_tv_genres')
         ]);
         
-        // 使用 Map 去重，键为 ID
-        const gMap = new Map();
-        // mGenres.data 结构: [{id: 28, name: '动作'}, ...]
-        [...(mGenres.data||[]), ...(tGenres.data||[])].forEach(g => {
-            if (g.id && g.name) gMap.set(g.id, g.name);
+        // 存储电影类型
+        rawMovieGenres.value = (mGenres.data || []).map(g => ({ label: g.name, value: g.id }));
+        // 存储剧集类型
+        rawTvGenres.value = (tGenres.data || []).map(g => ({ label: g.name, value: g.id }));
+
+        // ★★★ 修改：处理工作室数据，标记属于电影还是剧集 ★★★
+        const sRes = await axios.get('/api/custom_collections/config/studios');
+        // 后端返回结构: { label: "Netflix", value: "Netflix", types: ["movie", "tv"], ... }
+        rawStudios.value = (sRes.data || []).map(s => {
+            const types = s.types || []; // 获取后端返回的类型数组
+            return {
+                label: s.label,
+                value: s.value, 
+                // 只要数组里包含 'movie' 即视为支持电影
+                is_movie: types.includes('movie'),
+                // 只要数组里包含 'tv' 即视为支持剧集
+                is_tv: types.includes('tv')
+            };
         });
-        
-        // 生成选项: label=中文名, value=ID
-        genreOptions.value = Array.from(gMap.entries()).map(([id, name]) => ({ 
-            label: name, 
-            value: id 
-        }));
 
         const cRes = await axios.get('/api/custom_collections/config/tmdb_countries');
         countryOptions.value = cRes.data;
+        
         const lRes = await axios.get('/api/custom_collections/config/languages');
         languageOptions.value = lRes.data;
-        const sRes = await axios.get('/api/custom_collections/config/studios');
-        studioOptions.value = sRes.data;
+        
         const kRes = await axios.get('/api/custom_collections/config/keywords');
         keywordOptions.value = kRes.data;
+        
         const rRes = await axios.get('/api/custom_collections/config/unified_ratings_options');
         ratingOptions.value = (rRes.data || []).map(r => ({ label: r, value: r }));
 
