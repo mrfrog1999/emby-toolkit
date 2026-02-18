@@ -412,7 +412,7 @@
                       </div>
                     </n-space>
                   </n-form-item>
-                  <n-form-item label="自定义洗版">
+                  <n-form-item label="自定义洗版" v-if="currentRule.resubscribe_source === 'moviepilot'">
                     <n-space vertical>
                       <n-space align="center">
                         <n-switch 
