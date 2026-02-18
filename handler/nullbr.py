@@ -943,6 +943,34 @@ class SmartOrganizer:
             logger.warning(f"  ⚠️ 扫描目录出错 (CID: {cid}): {e}")
             
         return all_files
+    
+    def _is_junk_file(self, filename):
+        """
+        检查是否为垃圾文件/样本/花絮 (基于 MP 规则)
+        """
+        # 垃圾文件正则列表 (合并了通用规则和你提供的 MP 规则)
+        junk_patterns = [
+            # 基础关键词
+            r'(?i)\b(sample|trailer|featurette|bonus)\b',
+            
+            # MP 规则集
+            r'(?i)Special Ending Movie',
+            r'(?i)\[((TV|BD|\bBlu-ray\b)?\s*CM\s*\d{2,3})\]',
+            r'(?i)\[Teaser.*?\]',
+            r'(?i)\[PV.*?\]',
+            r'(?i)\[NC[OPED]+.*?\]',
+            r'(?i)\[S\d+\s+Recap(\s+\d+)?\]',
+            r'(?i)Menu',
+            r'(?i)Preview',
+            r'(?i)\b(CDs|SPs|Scans|Bonus|映像特典|映像|specials|特典CD|Menu|Logo|Preview|/mv)\b',
+            r'(?i)\b(NC)?(Disc|片头|OP|SP|ED|Advice|Trailer|BDMenu|片尾|PV|CM|Preview|MENU|Info|EDPV|SongSpot|BDSpot)(\d{0,2}|_ALL)\b',
+            r'(?i)WiKi\.sample'
+        ]
+
+        for pattern in junk_patterns:
+            if re.search(pattern, filename):
+                return True
+        return False
 
     def execute(self, root_item, target_cid):
         """
@@ -1033,23 +1061,26 @@ class SmartOrganizer:
             file_name = file_item.get('n', '')
             ext = file_name.split('.')[-1].lower() if '.' in file_name else ''
             
-            # ★★★ 修复 1: 优先获取 's' 字段 (int)，其次是 'size' ★★★
+            # 优先进行垃圾词过滤
+            if self._is_junk_file(file_name):
+                logger.info(f"  🗑️ [过滤] 命中屏蔽词，跳过垃圾文件: {file_name}")
+                continue
+
+            # 大小解析
             raw_size = file_item.get('s')
-            if raw_size is None:
-                raw_size = file_item.get('size')
+            if raw_size is None: raw_size = file_item.get('size')
             file_size = _parse_115_size(raw_size)
 
             is_video = ext in video_exts
             is_sub = ext in sub_exts
             
-            # 1. 过滤垃圾
-            if not (is_video or is_sub):
-                continue 
+            if not (is_video or is_sub): continue 
             
-            # 过滤小样 (仅针对视频)
+            # 过滤小样 (大小兜底)
+            # 如果正则没拦住，但文件很小，依然会被这里拦住
             if is_video:
                 if 0 < file_size < MIN_VIDEO_SIZE:
-                    logger.info(f"  🗑️ [过滤] 跳过小视频 (Sample): {file_name} ({file_size/1024/1024:.2f} MB)")
+                    logger.info(f"  🗑️ [过滤] 跳过小视频 (Size): {file_name}")
                     continue
                 elif file_size == 0:
                     # 如果解析出来是0，可能是API问题，打印日志但保留文件
