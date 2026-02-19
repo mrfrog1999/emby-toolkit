@@ -758,16 +758,24 @@ class SmartOrganizer:
         elif re.search(r'HDTV', name_upper): source = 'HDTV'
         elif re.search(r'DVD', name_upper): source = 'DVD'
         
+        # ★★★ 修复：UHD 识别 ★★★
+        # 如果有 UHD，通常意味着 4K BluRay，可以追加显示
+        if 'UHD' in name_upper:
+            if source == 'BluRay': source = 'UHD BluRay'
+            elif not source: source = 'UHD'
+
         # 2. 特效 (Effect: HDR/DV)
         effect = ""
-        is_dv = re.search(r'\b(DV|DOVI|DOLBY\s?VISION)\b', name_upper)
-        is_hdr = re.search(r'\b(HDR|HDR10\+?)\b', name_upper)
+        # ★★★ 修复：DoVi 识别 (放宽边界限制，支持 .DoVi. 这种格式) ★★★
+        # 使用非单词字符作为边界，或者直接匹配
+        is_dv = re.search(r'(?:^|[\.\s\-\_])(DV|DOVI|DOLBY\s?VISION)(?:$|[\.\s\-\_])', name_upper)
+        is_hdr = re.search(r'(?:^|[\.\s\-\_])(HDR|HDR10\+?)(?:$|[\.\s\-\_])', name_upper)
         
-        if is_dv and is_hdr: effect = "HDR" # 通常文件名写 WEB-DL HDR DV，这里简化显示，或者组合
+        if is_dv and is_hdr: effect = "HDR DV" # 组合显示
         elif is_dv: effect = "DV"
         elif is_hdr: effect = "HDR"
         
-        # 组合 Source 和 Effect (如 WEB-DL HDR)
+        # 组合 Source 和 Effect
         if source:
             info_tags.append(f"{source} {effect}".strip())
         elif effect:
@@ -788,7 +796,6 @@ class SmartOrganizer:
 
         # 5. 音频 (Audio)
         audio_info = []
-        # 音频编码
         if re.search(r'ATMOS', name_upper): audio_info.append('Atmos')
         elif re.search(r'TRUEHD', name_upper): audio_info.append('TrueHD')
         elif re.search(r'DTS-?HD(\s?MA)?', name_upper): audio_info.append('DTS-HD')
@@ -798,7 +805,6 @@ class SmartOrganizer:
         elif re.search(r'AAC', name_upper): audio_info.append('AAC')
         elif re.search(r'FLAC', name_upper): audio_info.append('FLAC')
         
-        # 声道
         chan_match = re.search(r'\b(7\.1|5\.1|2\.0)\b', filename)
         if chan_match:
             audio_info.append(chan_match.group(1))
@@ -1898,6 +1904,8 @@ def task_scan_and_organize_115(processor=None):
                     logger.warning(f"  ⚠️ 无法识别且无处存放: {name}")
 
         logger.info(f"=== 扫描结束，成功归类 {processed_count} 个，移入未识别 {moved_to_unidentified} 个 ===")
+        if processed_count > 0:
+            notify_cms_scan()
 
     except Exception as e:
         logger.error(f"115 扫描任务异常: {e}", exc_info=True)
