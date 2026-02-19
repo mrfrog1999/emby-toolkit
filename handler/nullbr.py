@@ -1173,50 +1173,6 @@ class SmartOrganizer:
         logger.info(f"  ✅ [整理] 完成。共迁移 {moved_count} 个文件。")
         return True
     
-    def execute_folder_move(self, root_item, target_cid):
-        """
-        乾坤大挪移：直接移动整个文件夹
-        返回: 
-          True: 移动成功 (无需后续操作)
-          False: 目标已存在 (需要回退到 execute 进行合并)
-        """
-        # 1. 准备标准名称
-        title = self.details.get('title') or self.original_title
-        date_str = self.details.get('date') or ''
-        year = date_str[:4] if date_str else ''
-        safe_title = re.sub(r'[\\/:*?"<>|]', '', title).strip()
-        std_root_name = f"{safe_title} ({year}) {{tmdb={self.tmdb_id}}}" if year else f"{safe_title} {{tmdb={self.tmdb_id}}}"
-        
-        dest_parent_cid = target_cid if (target_cid and str(target_cid) != '0') else root_item.get('cid')
-        source_cid = root_item.get('cid') # MP 上传的文件夹 ID
-
-        # 2. 检查目标目录是否存在 (深度查找)
-        try:
-            search_res = self.client.fs_files({
-                'cid': dest_parent_cid, 
-                'search_value': std_root_name, 
-                'limit': 1150 
-            })
-            if search_res.get('data'):
-                for item in search_res['data']:
-                    if item.get('n') == std_root_name and (item.get('ico') == 'folder' or not item.get('fid')):
-                        logger.info(f"  ⚠️ 目标目录已存在 ({std_root_name})，转入合并模式...")
-                        return False # 目标存在，不能直接移，返回 False
-        except: pass
-
-        # 3. 目标不存在 -> 执行乾坤大挪移
-        logger.info(f"  🚀 [115] 目标不存在，执行整目录移动: {root_item.get('name')} -> {dest_parent_cid}")
-        
-        # 3.2 移动整个文件夹到分类目录
-        logger.info(f"DEBUG -> 准备移动: {source_cid} 到 {dest_parent_cid}")
-        move_res = self.client.fs_move({"fid": source_cid, "pid": dest_parent_cid})
-        logger.info(f"DEBUG -> 接口原始返回: {move_res}")
-        if move_res.get('state'):
-            logger.info(f"  ✅ [整理] 整目录移动成功！")
-            return True
-        else:
-            logger.error(f"  ❌ 移动失败，转入合并模式")
-            return False
 # ==============================================================================
 # ★★★ 115 推送逻辑  ★★★
 # ==============================================================================
