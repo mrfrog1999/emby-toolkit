@@ -1012,7 +1012,7 @@ class SmartOrganizer:
         
         dest_parent_cid = target_cid if (target_cid and str(target_cid) != '0') else root_item.get('cid')
         
-        MIN_VIDEO_SIZE = 100 * 1024 * 1024 
+        MIN_VIDEO_SIZE = 10 * 1024 * 1024 
         
         video_exts = ['mp4', 'mkv', 'avi', 'ts', 'iso', 'rmvb', 'wmv', 'mov', 'm2ts']
         sub_exts = ['srt', 'ass', 'ssa', 'sub', 'vtt', 'sup']
