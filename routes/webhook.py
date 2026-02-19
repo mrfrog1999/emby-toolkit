@@ -29,6 +29,7 @@ from database import custom_collection_db, tmdb_collection_db, settings_db, user
 from database.log_db import LogDBManager
 from handler.tmdb import get_movie_details, get_tv_details
 from handler.nullbr import SmartOrganizer, get_config, notify_cms_scan
+from handler.p115_service import P115Service
 try:
     from p115client import P115Client
 except ImportError:
@@ -557,7 +558,7 @@ def emby_webhook():
             
             # 元数据
             tmdb_id = media_info.get("tmdb_id")
-            media_type_cn = media_info.get("type") # "电影" 或 "剧集"
+            media_type_cn = media_info.get("type") 
             title = media_info.get("title")
             
             if not file_id or not tmdb_id:
@@ -567,18 +568,11 @@ def emby_webhook():
             # 转换媒体类型
             media_type = 'tv' if media_type_cn == '电视剧' else 'movie'
             
-            # 3. 初始化 115 客户端
-            if P115Client is None:
-                logger.error("  ❌ 未安装 p115client，无法执行操作。")
+            # 3. 获取共享 115 客户端
+            client = P115Service.get_client()
+            if not client:
                 return jsonify({"status": "error_no_p115_client"}), 500
                 
-            cookies = nb_config.get('p115_cookies')
-            if not cookies:
-                logger.error("  ❌ 未配置 115 Cookies。")
-                return jsonify({"status": "error_no_cookies"}), 500
-                
-            client = P115Client(cookies)
-            
             # 4. 初始化智能整理器
             organizer = SmartOrganizer(client, tmdb_id, media_type, title)
             
@@ -586,54 +580,30 @@ def emby_webhook():
             target_cid = organizer.get_target_cid()
             
             if target_cid:
-                # ★★★ 核心修复 1: 优化获取真实文件逻辑 (增加排序) ★★★
-                real_root_item = None
-                try:
-                    # 增加排序：按修改时间倒序 (o='user_ptime', asc=0)
-                    # 这样刚上传的文件一定在第一个，绝对能抓到
-                    res = client.fs_files({
-                        'cid': current_parent_cid, 
-                        'limit': 50, 
-                        'o': 'user_ptime', 
-                        'asc': 0
-                    })
-                    if res.get('data'):
-                        for item in res['data']:
-                            # 匹配文件ID (fid) 或 文件夹ID (cid)
-                            if str(item.get('fid')) == str(file_id) or str(item.get('cid')) == str(file_id):
-                                real_root_item = item
-                                break
-                except Exception as e:
-                    logger.warning(f"  ⚠️ 获取真实文件信息失败: {e}")
+                # ★★★ 核心修复：完全信任 MP Payload，不再去 115 查询 ★★★
+                # MP 的 target_item 里已经包含了我们需要的所有信息：
+                # name: 文件名
+                # size: 文件大小 (字节)
+                # fileid: 文件ID
+                
+                logger.info(f"  🚀 [MP上传] 收到通知: {target_item.get('name')} (Size: {target_item.get('size')})")
+                
+                # 构造真实的文件对象 (模拟 115 API 返回的结构)
+                real_root_item = {
+                    'n': target_item.get("name"),
+                    's': target_item.get("size"), # 直接用 MP 给的大小
+                    'cid': current_parent_cid,    # 父目录 ID
+                    'fid': file_id                # ★★★ 关键：必须有 fid，execute 才会认为是单文件模式 ★★★
+                }
+                
+                # 双重保险：如果 MP 传的是文件夹 (type=0)，则移除 fid
+                # 但通常 MP 转存的都是视频文件，这里为了防止万一
+                if str(target_item.get("type")) == "0":
+                    logger.warning("  ⚠️ 检测到 MP 上传的是文件夹，这可能会导致递归扫描，请谨慎！")
+                    del real_root_item['fid']
+                    real_root_item['cid'] = file_id # 文件夹自己的 ID
 
-                # ★★★ 核心修复 2: 修复兜底逻辑 (防止误判为文件夹) ★★★
-                if not real_root_item:
-                    logger.warning("  ⚠️ 未能获取文件详情，使用基础信息兜底 (已启用安全模式)...")
-                    real_root_item = {
-                        'n': target_item.get("name"),
-                        'cid': current_parent_cid,
-                        's': 1024 * 1024 * 1024 # 伪造 1GB 大小，防止被过滤器误删
-                    }
-                    
-                    # 严谨的类型判断：MP 的 type 可能是 int 1 或 str "1"
-                    raw_type = target_item.get("type", 1)
-                    is_folder = False
-                    try:
-                        if int(raw_type) == 0:
-                            is_folder = True
-                    except: pass
-
-                    if is_folder:
-                        # 只有明确是文件夹时，才设置 cid
-                        real_root_item['cid'] = file_id
-                        # 移除 fid 确保进入文件夹模式
-                        if 'fid' in real_root_item: del real_root_item['fid']
-                    else:
-                        # 默认为文件！设置 fid！
-                        # 只要有 fid，execute 就不会递归扫描，绝对安全
-                        real_root_item['fid'] = file_id
-
-                logger.info(f"  🚀 [MP上传] 转交 SmartOrganizer.execute 处理: {real_root_item.get('n')}")
+                logger.info(f"  🚀 [MP上传] 转交 SmartOrganizer.execute 处理...")
                 
                 # 复用 execute 逻辑
                 success = organizer.execute(real_root_item, target_cid)

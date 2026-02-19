@@ -12,20 +12,13 @@ import config_manager
 import constants
 import utils
 import handler.tmdb as tmdb
-try:
-    from p115client import P115Client
-except ImportError:
-    P115Client = None
+from handler.p115_service import P115Service
 
 logger = logging.getLogger(__name__)
 
 # --- CMS通知防抖定时器 ---
 _cms_timer = None
 _cms_lock = threading.Lock()
-
-# 全局 115 限流锁和时间戳 
-_p115_lock = threading.Lock()
-_last_p115_request_time = 0
 
 # 硬编码配置：Nullbr 
 NULLBR_APP_ID = "7DqRtfNX3"
@@ -41,29 +34,6 @@ _user_level_cache = {
 
 def get_config():
     return settings_db.get_setting('nullbr_config') or {}
-
-def _wait_for_115_rate_limit():
-    """
-    115 API 全局限流器
-    读取配置中的 request_interval，强制睡眠
-    """
-    global _last_p115_request_time
-    
-    # 获取配置的间隔，默认为 5 秒
-    config = get_config()
-    interval = config.get('request_interval', 5)
-    
-    with _p115_lock:
-        current_time = time.time()
-        elapsed = current_time - _last_p115_request_time
-        
-        if elapsed < interval:
-            sleep_time = interval - elapsed
-            logger.debug(f"  ⏳ [115限流] 强制等待 {sleep_time:.2f} 秒 (间隔设置: {interval}s)...")
-            time.sleep(sleep_time)
-        
-        # 更新最后请求时间
-        _last_p115_request_time = time.time()
 
 def _get_headers():
     config = get_config()
@@ -973,8 +943,6 @@ class SmartOrganizer:
         if depth > max_depth: return []
         
         try:
-            # 调用限流函数，确保不会因为递归调用过快而触发 115 的速率限制
-            _wait_for_115_rate_limit()
             # limit 调大一点，防止文件过多漏掉
             res = self.client.fs_files({'cid': cid, 'limit': 2000})
             if res.get('data'):
@@ -1050,7 +1018,13 @@ class SmartOrganizer:
         
         # 策略 1: 先尝试查找 (防止 mkdir 报错)
         try:
-            search_res = self.client.fs_files({'cid': dest_parent_cid, 'search_value': std_root_name, 'limit': 50, 'o': 'user_otime', 'asc': 0})
+            search_res = self.client.fs_files({
+                'cid': dest_parent_cid, 
+                'search_value': std_root_name, 
+                'limit': 50, 
+                'o': 'user_utime', 
+                'asc': 0
+            })
             if search_res.get('data'):
                 for item in search_res['data']:
                     # 必须是文件夹且名字完全匹配
@@ -1376,8 +1350,8 @@ def push_to_115(resource_link, title, tmdb_id=None, media_type=None):
     智能推送：支持 115/115cdn/anxia 转存 和 磁力离线
     并执行 智能整理 (Smart Organize)
     """
-    if P115Client is None:
-        raise ImportError("未安装 p115 库")
+    client = P115Service.get_client()
+    if not client: raise Exception("无法初始化 115 客户端")
 
     config = get_config()
     cookies = config.get('p115_cookies')
@@ -1394,8 +1368,6 @@ def push_to_115(resource_link, title, tmdb_id=None, media_type=None):
 
     clean_url = _clean_link(resource_link)
     logger.info(f"  ➜ [NULLBR] 待处理链接: {clean_url}")
-    
-    client = P115Client(cookies)
     
     # ==================================================
     # ★★★ 步骤 1: 建立目录快照 (用于捕获新文件) ★★★
@@ -1531,8 +1503,8 @@ def get_115_account_info():
     """
     极简状态检查：只验证 Cookie 是否有效，不获取任何详情
     """
-    if P115Client is None:
-        raise Exception("未安装 p115client")
+    client = P115Service.get_client()
+    if not client: raise Exception("无法初始化 115 客户端")
         
     config = get_config()
     cookies = config.get('p115_cookies')
@@ -1541,8 +1513,6 @@ def get_115_account_info():
         raise Exception("未配置 Cookies")
         
     try:
-        client = P115Client(cookies)
-        
         # 尝试列出 1 个文件，这是验证 Cookie 最快最准的方法
         resp = client.fs_files({'limit': 1})
         
@@ -1713,9 +1683,8 @@ def task_scan_and_organize_115(processor=None):
     """
     logger.info("=== 开始执行 115 待整理目录扫描 ===")
     
-    if P115Client is None:
-        logger.error("未安装 p115client，无法执行。")
-        return
+    client = P115Service.get_client()
+    if not client: raise Exception("无法初始化 115 客户端")
 
     config = get_config()
     cookies = config.get('p115_cookies')
@@ -1733,7 +1702,6 @@ def task_scan_and_organize_115(processor=None):
         return
 
     try:
-        client = P115Client(cookies)
         save_cid = int(cid_val)
         
         # 1. 准备 '未识别' 目录 (代码保持不变)
@@ -1757,8 +1725,6 @@ def task_scan_and_organize_115(processor=None):
 
         # 2. 扫描目录
         logger.info(f"正在扫描目录 CID: {save_cid} ...")
-        # 调用限流函数，确保我们不会因为频繁调用 API 而被 115 临时封禁
-        _wait_for_115_rate_limit() 
         res = client.fs_files({'cid': save_cid, 'limit': 50, 'o': 'user_ptime', 'asc': 0})
         res = client.fs_files({'cid': save_cid, 'limit': 50, 'o': 'user_ptime', 'asc': 0})
         
@@ -1784,8 +1750,6 @@ def task_scan_and_organize_115(processor=None):
             # 如果初步识别为电影，但它是一个文件夹，我们需要看一眼里面的文件
             if tmdb_id and is_folder and media_type == 'movie':
                 try:
-                    # 调用限流函数，确保我们不会因为频繁调用 API 而被 115 临时封禁
-                    _wait_for_115_rate_limit()
                     # 读取文件夹内前 10 个文件
                     sub_res = client.fs_files({'cid': item.get('cid'), 'limit': 10})
                     if sub_res.get('data'):

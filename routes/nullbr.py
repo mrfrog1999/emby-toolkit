@@ -6,10 +6,7 @@ from flask import Blueprint, jsonify, request
 from extensions import admin_required
 from database import settings_db
 import handler.nullbr as nullbr_handler
-try:
-    from p115client import P115Client
-except ImportError:
-    P115Client = None
+from handler.p115_service import P115Service
 
 nullbr_bp = Blueprint('nullbr_bp', __name__, url_prefix='/api/nullbr')
 logger = logging.getLogger(__name__)
@@ -203,8 +200,9 @@ def list_115_directories():
     获取 115 目录列表
     参数: cid (默认为 0)
     """
-    if P115Client is None:
-        return jsonify({"success": False, "message": "未安装 p115client"}), 500
+    client = P115Service.get_client()
+    if not client:
+        return jsonify({"status": "error_no_p115_client"}), 500
         
     config = nullbr_handler.get_config()
     cookies = config.get('p115_cookies')
@@ -217,8 +215,6 @@ def list_115_directories():
         cid = 0
     
     try:
-        client = P115Client(cookies)
-        
         # ★★★ 核心修改：添加 nf=1 (只显示文件夹)，limit 设为 1000 ★★★
         # asc=1: 升序, o='file_name': 按文件名排序
         resp = client.fs_files({
@@ -272,14 +268,14 @@ def create_115_directory():
     if not name:
         return jsonify({"status": "error", "message": "目录名称不能为空"}), 400
         
-    if P115Client is None:
-        return jsonify({"status": "error", "message": "未安装 p115client"}), 500
+    client = P115Service.get_client()
+    if not client:
+        return jsonify({"status": "error_no_p115_client"}), 500
         
     config = settings_db.get_setting('nullbr_config') or {}
     cookies = config.get('p115_cookies')
     
     try:
-        client = P115Client(cookies)
         resp = client.fs_mkdir(name, pid)
         
         if resp.get('state'):
