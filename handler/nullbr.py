@@ -1205,7 +1205,7 @@ class SmartOrganizer:
         except: pass
 
         # 3. 目标不存在 -> 执行乾坤大挪移
-        logger.info(f"  🚀 [115] 目标不存在，执行整目录移动: {root_item.get('n')} -> {std_root_name}")
+        logger.info(f"  🚀 [115] 目标不存在，执行整目录移动: {root_item.get('cid')} -> {dest_parent_cid}")
         
         # 3.1 先重命名 MP 的文件夹为标准名称
         # if root_item.get('n') != std_root_name:
