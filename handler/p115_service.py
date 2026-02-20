@@ -341,13 +341,21 @@ class SmartOrganizer:
         elif bit_depth:
             info_tags.append(bit_depth)
 
-        # 5. 音频 (Audio)
+        # 5. 音频 (Audio) - ★★★ 修复重点 ★★★
         audio_info = []
-        # 匹配 2Audio, 3Audio, Multi, 双语, Dual-Audio 等
-        multi_audio_match = re.search(r'\b(\d+Audio|Multi|双语|多音轨|Dual-Audio)\b', name_upper, re.I)
-        if multi_audio_match:
-            # 直接使用原文件名中的大小写/格式，或者统一格式
-            audio_info.append(multi_audio_match.group(1))
+        
+        # (1) 优先匹配带数字的音轨 (2Audio, 3Audios) 并统一格式为 "xAudios"
+        # 正则说明: 匹配边界 + 数字 + 空格(可选) + Audio + s(可选) + 边界
+        num_audio_match = re.search(r'\b(\d+)\s?Audios?\b', name_upper, re.IGNORECASE)
+        if num_audio_match:
+            # 统一格式化为: 数字 + Audios (例如: 2Audios)
+            audio_info.append(f"{num_audio_match.group(1)}Audios")
+        else:
+            # (2) 如果没有数字音轨，再匹配 Multi/Dual 等通用标签
+            if re.search(r'\b(Multi|双语|多音轨|Dual-Audio)\b', name_upper, re.IGNORECASE):
+                audio_info.append('Multi')
+
+        # (3) 其他具体音频编码
         if re.search(r'ATMOS', name_upper): audio_info.append('Atmos')
         elif re.search(r'TRUEHD', name_upper): audio_info.append('TrueHD')
         elif re.search(r'DTS-?HD(\s?MA)?', name_upper): audio_info.append('DTS-HD')
@@ -356,11 +364,12 @@ class SmartOrganizer:
         elif re.search(r'AC3|DD', name_upper): audio_info.append('AC3')
         elif re.search(r'AAC', name_upper): audio_info.append('AAC')
         elif re.search(r'FLAC', name_upper): audio_info.append('FLAC')
-
+        elif re.search(r'OPUS', name_upper): audio_info.append('Opus')
+        
         chan_match = re.search(r'\b(7\.1|5\.1|2\.0)\b', filename)
         if chan_match:
             audio_info.append(chan_match.group(1))
-
+            
         if audio_info:
             info_tags.append(" ".join(audio_info))
 
@@ -566,34 +575,40 @@ class SmartOrganizer:
         logger.info(f"  🚀 [115] 开始整理: {root_item.get('n')} -> {std_root_name}")
 
         # ==================================================
-        # 步骤 A: 获取或创建目标标准文件夹 
+        # 步骤 A: 获取或创建目标标准文件夹 (优化版：先创建，失败再查找)
         # ==================================================
         final_home_cid = None
+        
+        # 1. 尝试直接创建目录 (乐观策略)
+        mk_res = self.client.fs_mkdir(std_root_name, dest_parent_cid)
+        
+        if mk_res.get('state'):
+            # 创建成功
+            final_home_cid = mk_res.get('cid')
+            logger.info(f"  🆕 创建新目录成功: {std_root_name}")
+        else:
+            # 创建失败，通常是因为目录已存在
+            # 此时回退到搜索逻辑
+            try:
+                search_res = self.client.fs_files({
+                    'cid': dest_parent_cid, 
+                    'search_value': std_root_name, 
+                    'limit': 1000, 
+                })
+                if search_res.get('data'):
+                    for item in search_res['data']:
+                        # 必须精确匹配名称，且是文件夹
+                        if item.get('n') == std_root_name and (item.get('ico') == 'folder' or not item.get('fid')):
+                            final_home_cid = item.get('cid')
+                            logger.info(f"  📂 发现已存在的目录: {std_root_name}")
+                            break
+            except Exception as e:
+                logger.warning(f"  ⚠️ 查找目录异常: {e}")
 
-        try:
-            search_res = self.client.fs_files({
-                'cid': dest_parent_cid,
-                'search_value': std_root_name,
-                'limit': 1150,
-            })
-            if search_res.get('data'):
-                for item in search_res['data']:
-                    if item.get('n') == std_root_name and (item.get('ico') == 'folder' or not item.get('fid')):
-                        final_home_cid = item.get('cid')
-                        logger.info(f"  📂 发现已存在的目录: {std_root_name}")
-                        break
-        except Exception as e:
-            logger.warning(f"  ⚠️ 查找目录异常: {e}")
-
-        # 如果没找到，创建新目录
+        # 如果经过创建和查找都拿不到 CID，说明真的出问题了
         if not final_home_cid:
-            mk_res = self.client.fs_mkdir(std_root_name, dest_parent_cid)
-            if mk_res.get('state'):
-                final_home_cid = mk_res.get('cid')
-                logger.info(f"  🆕 创建新目录: {std_root_name}")
-            else:
-                logger.error(f"  ❌ 创建目录失败: {std_root_name}")
-                return False
+            logger.error(f"  ❌ 无法获取目标目录 CID (创建失败且查找未果): {std_root_name}")
+            return False
 
         # ==================================================
         # 步骤 B: 扫描源文件
