@@ -1896,19 +1896,69 @@ const genreOptions = computed(() => {
 const getRuleSummary = (rule) => {
   const parts = [];
   if (rule.media_type !== 'all') parts.push(rule.media_type === 'tv' ? '剧集' : '电影');
+  
+  // A. 直接显示中文的字段 (自定义集合)
   if (rule.studios?.length) parts.push(`工作室:${rule.studios.join(',')}`);
   if (rule.keywords?.length) parts.push(`关键词:${rule.keywords.join(',')}`);
   if (rule.ratings?.length) parts.push(`分级:${rule.ratings.join(',')}`);
+
+  // B. 需要反查 Label 的字段 (存储的是 ID/Code)
+  
+  // 类型 (ID -> 中文)
   if (rule.genres?.length) {
       const names = rule.genres.map(id => {
+          // 注意：id 可能是数字或字符串，做个兼容比较
           const opt = genreOptions.value.find(o => o.value == id);
           return opt ? opt.label : id;
       });
       parts.push(`类型:${names.join(',')}`);
   }
-  if (rule.countries?.length) parts.push(`国家:${rule.countries.join(',')}`);
-  if (rule.year_min || rule.year_max) parts.push(`年份限制`);
-  if (rule.min_rating > 0) parts.push(`评分:≥${rule.min_rating}`);
+  
+  // 国家 (Code -> 中文)
+  if (rule.countries?.length) {
+      const names = rule.countries.map(code => {
+          const opt = countryOptions.value.find(o => o.value === code);
+          return opt ? opt.label : code;
+      });
+      parts.push(`国家:${names.join(',')}`);
+  }
+  
+  // 语言 (Code -> 中文)
+  if (rule.languages?.length) {
+      const names = rule.languages.map(code => {
+          const opt = languageOptions.value.find(o => o.value === code);
+          return opt ? opt.label : code;
+      });
+      parts.push(`语言:${names.join(',')}`);
+  }
+  
+  // 年份范围
+  if (rule.year_min || rule.year_max) {
+      if (rule.year_min && rule.year_max) {
+          parts.push(`年份:${rule.year_min}-${rule.year_max}`);
+      } else if (rule.year_min) {
+          parts.push(`年份:≥${rule.year_min}`);
+      } else if (rule.year_max) {
+          parts.push(`年份:≤${rule.year_max}`);
+      }
+  }
+
+  // 时长范围 
+  if (rule.runtime_min || rule.runtime_max) {
+      if (rule.runtime_min && rule.runtime_max) {
+          parts.push(`时长:${rule.runtime_min}-${rule.runtime_max}分`);
+      } else if (rule.runtime_min) {
+          parts.push(`时长:≥${rule.runtime_min}分`);
+      } else if (rule.runtime_max) {
+          parts.push(`时长:≤${rule.runtime_max}分`);
+      }
+  }
+
+  // 最低评分
+  if (rule.min_rating > 0) {
+      parts.push(`评分:≥${rule.min_rating}`);
+  }
+
   return parts.join(' + ') || '无条件';
 };
 
