@@ -161,10 +161,8 @@ class SmartOrganizer:
                     data['year'] = int(str(date_str)[:4])
                 except: 
                     pass
-            
-            # 打印调试日志，确认年份是否获取成功
-            # if str(self.tmdb_id) == '172752':
-            #     logger.info(f"  📅 [调试] ID:172752 解析年份: {data['year']} (原始日期: {date_str})")
+            # 补充评分供规则匹配
+            data['vote_average'] = raw_details.get('vote_average', 0)
 
             return data
 
