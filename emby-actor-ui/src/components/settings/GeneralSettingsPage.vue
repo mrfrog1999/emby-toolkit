@@ -323,7 +323,7 @@
                         </n-button>
                       </n-input-group>
                       <template #feedback>
-                        <n-text depth="3" style="font-size:0.8em;">NULLBR 转存和MP上传的目录。</n-text>
+                        <n-text depth="3" style="font-size:0.8em;">MP 上传和 NULLBR 转存的目录。</n-text>
                       </template>
                     </n-form-item>
 
@@ -363,12 +363,12 @@
                         <span class="card-title">智能分类规则</span>
                         <n-button secondary type="primary" @click="showRuleManagerModal = true">
                           <template #icon><n-icon :component="ListIcon" /></template>
-                          管理规则 ({{ sortingRules.length }})
+                          管理分类规则 ({{ sortingRules.length }})
                         </n-button>
                       </div>
                     </template>
                     <n-alert type="info" :show-icon="true">
-                      当开启“整理”时，系统将按顺序匹配以下规则。命中规则后，资源将被移动到指定的 115 目录中。
+                      当开启“整理”时，系统将按顺序匹配规则。命中规则后，资源将被移动到指定的 115 目录中。
                       <br>未命中的资源将移动到“未识别”目录。
                     </n-alert>
                   </n-card>
