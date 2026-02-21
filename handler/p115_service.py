@@ -696,13 +696,13 @@ class SmartOrganizer:
             move_res = self.client.fs_move(fid, real_target_cid)
             if move_res.get('state'):
                 # 给 115 后台和 CMS 一个喘息时间
-                time.sleep(1.5) 
+                # time.sleep(1.5) 
                 
                 # 4. 在目标位置执行重命名
-                if new_filename != file_name:
-                    rename_res = self.client.fs_rename((fid, new_filename))
-                    if rename_res.get('state'):
-                        logger.info(f"  ✏️ [重命名] 成功 (在目标目录执行): {new_filename}")
+                # if new_filename != file_name:
+                #     rename_res = self.client.fs_rename((fid, new_filename))
+                #     if rename_res.get('state'):
+                #         logger.info(f"  ✏️ [重命名] 成功 (在目标目录执行): {new_filename}")
                 
                 moved_count += 1
 
