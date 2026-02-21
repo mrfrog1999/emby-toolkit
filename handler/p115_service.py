@@ -603,8 +603,8 @@ class SmartOrganizer:
         cache_key = f"{dest_parent_cid}-{std_root_name}"
         
         if cache_key in _directory_cid_cache:
-            logger.info(f"  🔍 主目录 CID 缓存命中: {cache_key} -> {_directory_cid_cache[cache_key]}")
             final_home_cid = _directory_cid_cache[cache_key]
+            logger.info(f"  ⚡ [缓存命中] 主目录 CID: {final_home_cid}")
         
         if not final_home_cid:
             # 1. 直接尝试创建
@@ -692,13 +692,18 @@ class SmartOrganizer:
                         logger.info(f"  ✅ 季目录 CID 已缓存: {s_cid} (Key: {s_cache_key})")
                         real_target_cid = s_cid
 
-            # 3. 先改名
-            if new_filename != file_name:
-                if self.client.fs_rename((fid, new_filename)).get('state'):
-                    logger.info(f"  ✏️ [重命名] {file_name} -> {new_filename}")
-
-            # 4. 一步到位移动到目的地
-            if self.client.fs_move(fid, real_target_cid).get('state'):
+            # 3. 先移动
+            move_res = self.client.fs_move(fid, real_target_cid)
+            if move_res.get('state'):
+                # 给 115 后台和 CMS 一个喘息时间
+                time.sleep(1.5) 
+                
+                # 4. 在目标位置执行重命名
+                if new_filename != file_name:
+                    rename_res = self.client.fs_rename((fid, new_filename))
+                    if rename_res.get('state'):
+                        logger.info(f"  ✏️ [重命名] 成功 (在目标目录执行): {new_filename}")
+                
                 moved_count += 1
 
         # 步骤 D: 清理空目录
