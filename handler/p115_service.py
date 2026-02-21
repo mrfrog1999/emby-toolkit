@@ -598,10 +598,14 @@ class SmartOrganizer:
             # 创建失败，通常是因为目录已存在
             # 此时回退到搜索逻辑
             try:
+                # ★★★ 优化：设置 30 足够了 ★★★
+                # 1. search_value 是服务端搜索，不用担心早期目录搜不到。
+                # 2. 设置 > 1 是为了防止同名文件排在文件夹前面，导致 limit 1 此时返回了文件而被过滤掉。
+                # 3. 30 个冗余位足够容纳同名文件干扰，且对 API 压力极小。
                 search_res = self.client.fs_files({
                     'cid': dest_parent_cid, 
                     'search_value': std_root_name, 
-                    'limit': 1000, 
+                    'limit': 30, 
                 })
                 if search_res.get('data'):
                     for item in search_res['data']:
