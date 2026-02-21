@@ -604,12 +604,9 @@ def emby_webhook():
                     # 强制删除 MP 临时目录
                     if current_parent_cid and str(current_parent_cid) != '0':
                         try:
-                            # ★★★ 核心修复：检查目录创建时间，防止误删正在上传的剧集目录 ★★★
+                            # 检查目录创建时间，防止误删正在上传的剧集目录
                             should_delete = True
-                            
-                            # 获取目录详情以检查 ptime
                             try:
-                                dir_info = client.fs_files({'cid': current_parent_cid, 'limit': 1})
                                 if media_type == 'tv':
                                     logger.info(f"  🛡️ [MP上传] 检测到是剧集，跳过立即删除临时目录，交由定时任务处理。")
                                     should_delete = False
