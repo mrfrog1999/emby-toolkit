@@ -181,8 +181,6 @@ def play_115_video(pick_code):
     
 @p115_bp.route('/fix_strm', methods=['POST'])
 @admin_required
-@p115_bp.route('/fix_strm', methods=['POST'])
-@admin_required
 def fix_strm_files():
     """扫描并修正本地所有 .strm 文件的内部链接 (支持兼容 CMS 老格式)"""
     config = get_config()
