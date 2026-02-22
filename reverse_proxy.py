@@ -819,7 +819,7 @@ def proxy_all(path):
                                 client_ip = request.headers.get('X-Real-IP', request.remote_addr)
                                 
                                 # 调用内存缓存版的直链获取器
-                                real_url = _get_cached_115_url(pick_code, player_ua, client_ip)
+                                real_url = _get_cached_115_url(pick_code, client_ip)
                                 
                                 if real_url:
                                     logger.info(f"  🎬 [反代劫持] 成功拦截 Emby 流请求，下发 115 CDN 直链！")
@@ -848,93 +848,6 @@ def proxy_all(path):
                                     return redirect(real_url, code=302)
             except Exception as e:
                 logger.error(f"  ❌ 反代拦截解析直链出错，回退原生处理: {e}")
-
-        # ====================================================================
-        # ★★★ 终极拦截 B：联动删除 115 网盘物理文件 (支持电影/整剧/整季) ★★★
-        # 拦截客户端的 DELETE 请求，提取 pick_code 扔给后台静默删网盘，然后放行给 Emby 处理本地
-        # ====================================================================
-        enable_sync_delete = config_manager.APP_CONFIG.get(constants.CONFIG_OPTION_115_ENABLE_SYNC_DELETE, False)
-        
-        # 只有在开启了开关，且是 DELETE 请求时，才执行联动删除逻辑
-        # 匹配 /emby/Items/123 或 /Items/123，且 ID 支持数字、字母、连字符
-        delete_match = re.search(r'/Items/([a-zA-Z0-9\-]+)', full_path, re.IGNORECASE)
-
-        if enable_sync_delete and request.method == 'DELETE' and delete_match:
-            try:
-                item_id = delete_match.group(1)
-                base_url, api_key = _get_real_emby_url_and_key()
-                user_id = request.args.get('UserId') or request.args.get('api_key') or "admin"
-                
-                logger.info(f"  🗑️ [联动删除] 拦截到 Emby 删除请求，正在嗅探关联的 STRM (ItemID: {item_id})...")
-                
-                # 1. 询问 Emby：这个 ID 是啥？物理路径在哪？
-                item_url = f"{base_url}/emby/Items/{item_id}"
-                item_resp = requests.get(item_url, params={'api_key': api_key, 'UserId': user_id}, timeout=5)
-                
-                paths_to_check = []
-                if item_resp.status_code == 200:
-                    item_data = item_resp.json()
-                    item_type = item_data.get('Type')
-                    
-                    if item_type in ['Movie', 'Episode']:
-                        paths_to_check.append(item_data.get('Path'))
-                    elif item_type in ['Series', 'Season']:
-                        # 如果删的是整部剧/整季，往下深挖所有子集的路径
-                        query_url = f"{base_url}/emby/Items"
-                        params = {
-                            'api_key': api_key,
-                            'ParentId': item_id,
-                            'Recursive': 'true',
-                            'IncludeItemTypes': 'Movie,Episode',
-                            'Fields': 'Path'
-                        }
-                        children_resp = requests.get(query_url, params=params, timeout=10)
-                        if children_resp.status_code == 200:
-                            for child in children_resp.json().get('Items', []):
-                                paths_to_check.append(child.get('Path'))
-
-                # 2. 读取所有的 .strm，把 pick_code 刮出来
-                pick_codes = []
-                for p in paths_to_check:
-                    if p and p.endswith('.strm') and os.path.exists(p):
-                        try:
-                            with open(p, 'r', encoding='utf-8') as f:
-                                content = f.read().strip()
-                                # 提取 pick_code
-                                if '/api/p115/play/' in content:
-                                    pc = content.split('/api/p115/play/')[-1].split('?')[0].strip()
-                                    if pc: pick_codes.append(pc)
-                        except Exception: pass
-                
-                # 3. 如果找到了关联资源，开启【后台静默线程】去 115 杀人，绝不阻塞用户删除体验
-                if pick_codes:
-                    def background_115_delete(pc_list):
-                        try:
-                            from handler.p115_service import P115Service
-                            client = P115Service.get_client()
-                            if not client: return
-                            
-                            fids = []
-                            for pc in pc_list:
-                                try:
-                                    # 用 pc 换取 file_id
-                                    url_obj = client.download_url(pc, user_agent="Mozilla/5.0")
-                                    if hasattr(url_obj, 'id'): fids.append(url_obj.id)
-                                except Exception: pass
-                                    
-                            if fids:
-                                client.fs_delete(fids) # 官方 API 支持列表批量删除！
-                                logger.info(f"  💥 [后台联动删除] 成功抹除了 {len(fids)} 个 115 网盘物理文件！")
-                        except Exception as e:
-                            logger.error(f"  ❌ 后台删除任务异常: {e}")
-
-                    # 启动后台协程
-                    from gevent import spawn
-                    spawn(background_115_delete, pick_codes)
-                    logger.info(f"  🚀 [联动删除] 已将 {len(pick_codes)} 个文件的销毁任务扔进后台处理。")
-
-            except Exception as e:
-                logger.error(f"  ❌ 联动删除拦截器发生异常: {e}")
 
         # --- 拦截 A: 虚拟项目海报图片 ---
         if path.startswith('emby/Items/') and '/Images/Primary' in path:
