@@ -647,7 +647,7 @@ class SmartOrganizer:
         final_home_cid = P115CacheManager.get_cid(dest_parent_cid, std_root_name)
 
         if final_home_cid:
-            logger.info(f"  ⚡ [缓存命中] 主目录: {std_root_name}")
+            logger.info(f"  ⚡ [DB缓存命中] 主目录: {std_root_name}")
         else:
             # 1. 缓存没命中，直接尝试创建
             mk_res = self.client.fs_mkdir(std_root_name, dest_parent_cid)
@@ -656,13 +656,14 @@ class SmartOrganizer:
                 P115CacheManager.save_cid(final_home_cid, dest_parent_cid, std_root_name)
                 logger.info(f"  🆕 创建新主目录并缓存: {std_root_name}")
             else:
-                # 2. 创建失败（目录已存在），尝试使用 115 的 search_value (虽然它很瞎)
+                # 2. 创建失败（目录已存在），尝试使用 115 的 search_value
                 try:
                     search_res = self.client.fs_files({'cid': dest_parent_cid, 'search_value': std_root_name, 'limit': 1150})
                     if search_res.get('data'):
                         for item in search_res['data']:
                             if item.get('n') == std_root_name and not item.get('fid'):
                                 final_home_cid = item.get('cid')
+                                P115CacheManager.save_cid(final_home_cid, dest_parent_cid, std_root_name) # ★ 只在这里存
                                 break
                 except Exception as e:
                     logger.warning(f"  ⚠️ 115模糊查找异常: {e}")
@@ -674,7 +675,6 @@ class SmartOrganizer:
                     limit = 1000
                     while True:
                         try:
-                            # type=0 表示只请求文件夹，极大减少数据量
                             res = self.client.fs_files({'cid': dest_parent_cid, 'limit': limit, 'offset': offset, 'type': 0})
                             data = res.get('data', [])
                             if not data: break # 翻到底了
@@ -682,6 +682,8 @@ class SmartOrganizer:
                             for item in data:
                                 if item.get('n') == std_root_name:
                                     final_home_cid = item.get('cid')
+                                    P115CacheManager.save_cid(final_home_cid, dest_parent_cid, std_root_name) # ★ 只在这里存
+                                    logger.info(f"  📂 成功查找到已存在主目录并永久缓存: {std_root_name}")
                                     break
                                     
                             if final_home_cid: break # 找到了
@@ -690,11 +692,6 @@ class SmartOrganizer:
                         except Exception as e:
                             logger.error(f"遍历查找失败: {e}")
                             break
-
-                # 只要找到了，就永远记在本地数据库里！
-                if final_home_cid:
-                    P115CacheManager.save_cid(final_home_cid, dest_parent_cid, std_root_name)
-                    logger.info(f"  📂 成功查找到已存在主目录并永久缓存: {std_root_name}")
 
         if not final_home_cid:
             logger.error(f"  ❌ 无法获取或创建目标目录 (已尝试所有手段)")
