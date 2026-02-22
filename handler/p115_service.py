@@ -850,7 +850,7 @@ class SmartOrganizer:
                             
                             with open(strm_filepath, 'w', encoding='utf-8') as f:
                                 f.write(strm_content)
-                            logger.info(f"  📝 [STRM生成] 已生成视频直链: {strm_filename}")
+                            logger.info(f"  📝 STRM 已生成 -> {strm_filename}")
                             
                         elif is_sub:
                             # 处理字幕 -> 真实下载到本地供 Emby 挂载
