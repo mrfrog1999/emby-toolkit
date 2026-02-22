@@ -1241,9 +1241,110 @@ def task_sync_115_directory_tree(processor=None):
 
     update_progress(100, f"=== 同步结束！共成功更新 {total_cached} 个目录的缓存 ===")
 
+# --- 极速模式待修复 ---
+# def task_full_sync_strm_and_subs(processor=None):
+#     """
+#     极速全量生成 STRM 与 同步字幕
+#     """
+#     logger.info("=== 🚀 开始极速全量生成 STRM 与 同步字幕 ===")
+    
+#     try:
+#         import task_manager
+#     except ImportError:
+#         task_manager = None
+
+#     def update_progress(prog, msg):
+#         if task_manager: task_manager.update_status_from_thread(prog, msg)
+#         logger.info(msg)
+
+#     config = get_config()
+#     local_root = config.get(constants.CONFIG_OPTION_LOCAL_STRM_ROOT)
+#     etk_url = config.get(constants.CONFIG_OPTION_ETK_SERVER_URL, "").rstrip('/')
+#     allowed_exts = set(e.lower() for e in config.get(constants.CONFIG_OPTION_115_EXTENSIONS, []))
+#     known_video_exts = {'mp4', 'mkv', 'avi', 'ts', 'iso', 'rmvb', 'wmv', 'mov', 'm2ts', 'flv', 'mpg'}
+#     known_sub_exts = {'srt', 'ass', 'ssa', 'sub', 'vtt', 'sup'}
+    
+#     if not local_root or not etk_url:
+#         update_progress(100, "错误：未配置本地 STRM 根目录或 ETK 访问地址！")
+#         return
+
+#     client = P115Service.get_client()
+#     if not client: return
+
+#     raw_rules = settings_db.get_setting(constants.DB_KEY_115_SORTING_RULES)
+#     if not raw_rules: return
+#     rules = json.loads(raw_rules) if isinstance(raw_rules, str) else raw_rules
+#     target_cids = list(set(str(r['cid']) for r in rules if r.get('enabled', True) and r.get('cid') and str(r['cid']) != '0'))
+
+#     # 导入大佬的极速遍历函数
+#     try:
+#         from p115client.tool.iterdir import iter_files_with_path_skim
+#     except ImportError:
+#         update_progress(100, "错误：当前 p115client 版本不支持 iter_files_with_path_skim，请升级！")
+#         return
+
+#     total_cids = len(target_cids)
+#     for idx, base_cid in enumerate(target_cids):
+#         base_prog = int((idx / total_cids) * 100)
+#         update_progress(base_prog, f"正在极速遍历分类 CID: {base_cid} ...")
+        
+#         try:
+#             # 大佬的函数直接吐出所有子文件，带完整路径！
+#             for info in iter_files_with_path_skim(client, base_cid):
+#                 if processor and getattr(processor, 'is_stop_requested', lambda: False)():
+#                     update_progress(100, "任务已被用户手动终止。")
+#                     return
+                    
+#                 name = info.get('name', '')
+#                 ext = name.split('.')[-1].lower() if '.' in name else ''
+#                 if ext not in allowed_exts: continue
+                
+#                 pc = info.get('pc') or info.get('pickcode')
+#                 if not pc: continue
+                
+#                 # info['path'] 通常是一个包含路径节点字典的列表
+#                 # 我们提取出从 base_cid 开始的相对路径
+#                 path_nodes = info.get('path', [])
+#                 rel_path_parts = [str(p.get('name')) for p in path_nodes[1:]] # 跳过根节点
+                
+#                 current_local_path = os.path.join(local_root, *rel_path_parts)
+#                 os.makedirs(current_local_path, exist_ok=True)
+                
+#                 if ext in known_video_exts:
+#                     strm_name = os.path.splitext(name)[0] + ".strm"
+#                     strm_path = os.path.join(current_local_path, strm_name)
+#                     content = f"{etk_url}/api/p115/play/{pc}"
+                    
+#                     need_write = True
+#                     if os.path.exists(strm_path):
+#                         with open(strm_path, 'r', encoding='utf-8') as f:
+#                             if f.read().strip() == content: need_write = False
+                            
+#                     if need_write:
+#                         with open(strm_path, 'w', encoding='utf-8') as f: f.write(content)
+#                         logger.debug(f"生成 STRM: {strm_name}")
+                        
+#                 elif ext in known_sub_exts:
+#                     sub_path = os.path.join(current_local_path, name)
+#                     if not os.path.exists(sub_path):
+#                         import requests
+#                         url_obj = client.download_url(pc, user_agent="Mozilla/5.0")
+#                         if url_obj:
+#                             resp = requests.get(str(url_obj), stream=True, timeout=15)
+#                             resp.raise_for_status()
+#                             with open(sub_path, 'wb') as f:
+#                                 for chunk in resp.iter_content(8192): f.write(chunk)
+#                             logger.debug(f"补齐字幕: {name}")
+                            
+#         except Exception as e:
+#             logger.error(f"极速遍历出错 CID:{base_cid}: {e}")
+
+#     update_progress(100, "=== 极速全量 STRM 与字幕同步完美结束 ===")
+
+# --- 标准模式 ---
 def task_full_sync_strm_and_subs(processor=None):
     """
-    极速全量生成 STRM 与 同步字幕 (带防失败自动降级机制)
+    [任务链] 深度遍历 115 目标分类目录，全量生成 .strm 并下载字幕
     """
     logger.info("=== 🚀 开始全量生成 STRM 与 同步字幕 ===")
     
@@ -1259,13 +1360,10 @@ def task_full_sync_strm_and_subs(processor=None):
     config = get_config()
     local_root = config.get(constants.CONFIG_OPTION_LOCAL_STRM_ROOT)
     etk_url = config.get(constants.CONFIG_OPTION_ETK_SERVER_URL, "").rstrip('/')
-    
+    media_root_cid = str(config.get(constants.CONFIG_OPTION_115_MEDIA_ROOT_CID, '0'))
+    allowed_exts = set(e.lower() for e in config.get(constants.CONFIG_OPTION_115_EXTENSIONS, []))
     known_video_exts = {'mp4', 'mkv', 'avi', 'ts', 'iso', 'rmvb', 'wmv', 'mov', 'm2ts', 'flv', 'mpg'}
     known_sub_exts = {'srt', 'ass', 'ssa', 'sub', 'vtt', 'sup'}
-    
-    allowed_exts = set(e.lower() for e in config.get(constants.CONFIG_OPTION_115_EXTENSIONS, []))
-    if not allowed_exts:
-        allowed_exts = known_video_exts | known_sub_exts
     
     if not local_root or not etk_url:
         update_progress(100, "错误：未配置本地 STRM 根目录或 ETK 访问地址！")
@@ -1278,136 +1376,97 @@ def task_full_sync_strm_and_subs(processor=None):
     if not raw_rules: return
     rules = json.loads(raw_rules) if isinstance(raw_rules, str) else raw_rules
     
-    cid_to_category = {}
-    for r in rules:
-        if r.get('enabled', True) and r.get('cid') and str(r['cid']) != '0':
-            cid_to_category[str(r['cid'])] = r.get('dir_name', '未识别')
-            
-    target_cids = list(cid_to_category.keys())
-
-    # ==========================================
-    # ★ 兜底机制：100% 可靠的标准递归扫描
-    # ==========================================
-    def reliable_recursive_scan(client, cid, current_path_parts):
-        offset = 0
-        limit = 1000
-        while True:
-            try:
-                res = client.fs_files({'cid': cid, 'limit': limit, 'offset': offset})
-                data = res.get('data', [])
-                if not data: break
-                
-                for item in data:
-                    if item.get('fid'): # 是文件
-                        item['rel_path_parts'] = current_path_parts
-                        yield item
-                    elif item.get('cid'): # 是目录，继续往下钻
-                        yield from reliable_recursive_scan(client, item.get('cid'), current_path_parts + [item.get('n')])
-                        
-                if len(data) < limit: break
-                offset += limit
-            except Exception as e:
-                logger.error(f"扫描目录失败 CID:{cid}: {e}")
-                break
-
+    # 提取启用的目录
+    target_cids = list(set(str(r['cid']) for r in rules if r.get('enabled', True) and r.get('cid') and str(r['cid']) != '0'))
     total_cids = len(target_cids)
+
+    # 1. 预先计算分类相对路径
+    category_path_map = {}
+    for cid in target_cids:
+        try:
+            dir_info = client.fs_files({'cid': cid, 'limit': 1})
+            path_nodes = dir_info.get('path', [])
+            start_idx = 1 if media_root_cid == '0' else next((i + 1 for i, n in enumerate(path_nodes) if str(n.get('cid')) == media_root_cid), 0)
+            
+            if start_idx > 0 and start_idx < len(path_nodes):
+                rel_segments = [str(n.get('name')).strip() for n in path_nodes[start_idx:]]
+                category_path_map[cid] = os.path.join(*rel_segments)
+            else:
+                category_path_map[cid] = next((r.get('dir_name') for r in rules if str(r.get('cid')) == cid), "未识别")
+        except:
+            category_path_map[cid] = "未识别"
+
+    # 2. 开始广度优先遍历 (BFS) 扫描文件
     for idx, base_cid in enumerate(target_cids):
         base_prog = int((idx / total_cids) * 100)
-        category_name = cid_to_category.get(base_cid, '未识别')
-        update_progress(base_prog, f"正在遍历分类 [{category_name}] CID: {base_cid} ...")
+        rel_path = category_path_map.get(base_cid, "未识别")
+        base_local_dir = os.path.join(local_root, rel_path)
         
-        items_yielded = 0
-        files_generated = 0
+        update_progress(base_prog, f"正在深度扫描分类: {rel_path} ...")
         
-        # 统一的文件处理逻辑
-        def process_file_info(info, rel_path_parts):
-            nonlocal files_generated
-            name = info.get('name') or info.get('n', '')
-            ext = name.split('.')[-1].lower() if '.' in name else ''
-            if ext not in allowed_exts: return
-            
-            pc = info.get('pc') or info.get('pickcode')
-            if not pc: return
-            
-            # 拼接本地路径：本地根目录 / 世纪老片 / 007... / 文件
-            current_local_path = os.path.join(local_root, category_name, *rel_path_parts)
+        queue = [(base_cid, base_local_dir)]
+        
+        while queue:
+            if processor and getattr(processor, 'is_stop_requested', lambda: False)():
+                update_progress(100, "任务已被用户手动终止。")
+                return
+                
+            current_cid, current_local_path = queue.pop(0)
             os.makedirs(current_local_path, exist_ok=True)
             
-            if ext in known_video_exts:
-                strm_name = os.path.splitext(name)[0] + ".strm"
-                strm_path = os.path.join(current_local_path, strm_name)
-                content = f"{etk_url}/api/p115/play/{pc}"
-                
-                need_write = True
-                if os.path.exists(strm_path):
-                    with open(strm_path, 'r', encoding='utf-8') as f:
-                        if f.read().strip() == content: need_write = False
-                        
-                if need_write:
-                    with open(strm_path, 'w', encoding='utf-8') as f: f.write(content)
-                    logger.debug(f"生成 STRM: {strm_name}")
-                files_generated += 1
+            offset = 0
+            limit = 1000
+            while True:
+                try:
+                    res = client.fs_files({'cid': current_cid, 'limit': limit, 'offset': offset})
+                    data = res.get('data', [])
+                    if not data: break
                     
-            elif ext in known_sub_exts:
-                sub_path = os.path.join(current_local_path, name)
-                if not os.path.exists(sub_path):
-                    try:
-                        import requests
-                        url_obj = client.download_url(pc, user_agent="Mozilla/5.0")
-                        if url_obj:
-                            resp = requests.get(str(url_obj), stream=True, timeout=15)
-                            resp.raise_for_status()
-                            with open(sub_path, 'wb') as f:
-                                for chunk in resp.iter_content(8192): f.write(chunk)
-                            logger.debug(f"补齐字幕: {name}")
-                        files_generated += 1
-                    except Exception as e:
-                        logger.error(f"下载字幕失败 [{name}]: {e}")
-
-        # ==========================================
-        # 1. 优先尝试极速模式
-        # ==========================================
-        try:
-            from p115client.tool.iterdir import iter_files_with_path_skim
-            # ★ 修复：强制传入 int(cid)，并开启 with_ancestors 获取完整路径字典
-            for info in iter_files_with_path_skim(client, int(base_cid), with_ancestors=True):
-                if processor and getattr(processor, 'is_stop_requested', lambda: False)():
-                    update_progress(100, "任务已被用户手动终止。")
-                    return
-                    
-                items_yielded += 1
-                
-                # 解析极速模式的路径 (提取出分类目录之后的所有子文件夹名)
-                path_nodes = info.get('path', [])
-                rel_path_parts = []
-                if isinstance(path_nodes, list):
-                    names = [str(p.get('name', '')) for p in path_nodes if isinstance(p, dict)]
-                    try:
-                        cat_idx = names.index(category_name)
-                        rel_path_parts = names[cat_idx + 1:]
-                    except ValueError:
-                        if len(names) > 0:
-                            rel_path_parts = [names[-1]] # 兜底取父目录
+                    for item in data:
+                        name = item.get('n', '')
+                        # 如果是文件夹，加入队列继续钻
+                        if not item.get('fid'):
+                            queue.append((str(item.get('cid')), os.path.join(current_local_path, name)))
+                        else:
+                            # 是文件！处理之
+                            ext = name.split('.')[-1].lower() if '.' in name else ''
+                            if ext not in allowed_exts: continue
                             
-                process_file_info(info, rel_path_parts)
-        except Exception as e:
-            logger.warning(f"极速遍历发生异常 CID:{base_cid}: {e}")
+                            pc = item.get('pc') or item.get('pick_code')
+                            if not pc: continue
+                            
+                            if ext in known_video_exts:
+                                strm_name = os.path.splitext(name)[0] + ".strm"
+                                strm_path = os.path.join(current_local_path, strm_name)
+                                content = f"{etk_url}/api/p115/play/{pc}"
+                                
+                                need_write = True
+                                if os.path.exists(strm_path):
+                                    with open(strm_path, 'r', encoding='utf-8') as f:
+                                        if f.read().strip() == content: need_write = False
+                                        
+                                if need_write:
+                                    with open(strm_path, 'w', encoding='utf-8') as f: f.write(content)
+                                    
+                            elif ext in known_sub_exts:
+                                sub_path = os.path.join(current_local_path, name)
+                                if not os.path.exists(sub_path):
+                                    import requests
+                                    url_obj = client.download_url(pc, user_agent="Mozilla/5.0")
+                                    dl_url = str(url_obj)
+                                    if dl_url:
+                                        resp = requests.get(dl_url, stream=True, timeout=15)
+                                        resp.raise_for_status()
+                                        with open(sub_path, 'wb') as f:
+                                            for chunk in resp.iter_content(8192): f.write(chunk)
+                                        logger.debug(f"已补齐字幕: {name}")
 
-        # ==========================================
-        # 2. 自动降级机制 (如果极速模式失效)
-        # ==========================================
-        if items_yielded == 0:
-            logger.warning(f"⚠️ 极速遍历未获取到文件，自动降级为标准递归扫描 [{category_name}] ...")
-            try:
-                for info in reliable_recursive_scan(client, base_cid, []):
-                    if processor and getattr(processor, 'is_stop_requested', lambda: False)():
-                        update_progress(100, "任务已被用户手动终止。")
-                        return
-                    process_file_info(info, info.get('rel_path_parts', []))
-            except Exception as e:
-                logger.error(f"标准遍历异常 CID:{base_cid}: {e}")
-                
-        logger.info(f"✅ 分类 [{category_name}] 处理完成，共生成/同步 {files_generated} 个文件。")
+                    if len(data) < limit: break
+                    offset += limit
+                    time.sleep(0.5)
+                except Exception as e:
+                    logger.error(f"遍历目录 CID:{current_cid} 出错: {e}")
+                    break
 
     update_progress(100, "=== 全量 STRM 与字幕同步完美结束 ===")
 
