@@ -783,51 +783,49 @@ def proxy_all(path):
 
         # ====================================================================
         # ★★★ 终极拦截 A+：全盘接管视频流 302 直链解析 ★★★
-        # 当客户端请求播放视频流时，在这里进行拦截
+        # 彻底绕过 Emby 转码引擎，解决转圈和报错问题！
         # ====================================================================
-        if '/videos/' in full_path and '/stream' in full_path:
-            # 1. 尝试从 Emby 获取这个视频的项目详情
-            item_id_match = re.search(r'/videos/([^/]+)/', full_path)
-            if item_id_match:
-                item_id = item_id_match.group(1)
-                base_url, api_key = _get_real_emby_url_and_key()
-                # 假设客户端请求中包含 UserId，或者我们用 Admin 获取
-                user_id = request.args.get('UserId') or request.args.get('api_key') # 简易处理
-                
-                if user_id:
-                    # 获取项目详情，查找它对应的真实路径 (Path)
+        if '/videos/' in full_path and ('/stream' in full_path or '/original' in full_path):
+            try:
+                # 1. 从 URL 提取 Item ID
+                item_id_match = re.search(r'/videos/([^/]+)/', full_path)
+                if item_id_match:
+                    item_id = item_id_match.group(1)
+                    base_url, api_key = _get_real_emby_url_and_key()
+                    user_id = request.args.get('UserId') or request.args.get('api_key') or "admin" # 兜底
+                    
+                    # 2. 向真实 Emby 悄悄打听一下这个视频的文件路径
                     details_url = f"{base_url}/emby/Items/{item_id}"
-                    try:
-                        resp = requests.get(details_url, params={'api_key': api_key, 'UserId': user_id}, timeout=5)
-                        if resp.status_code == 200:
-                            item_data = resp.json()
-                            file_path = item_data.get('Path', '')
-                            
-                            # 2. 判断是不是我们生成的 .strm 假文件
-                            if file_path.endswith('.strm'):
-                                # 读取本地 .strm 文件内容
-                                if os.path.exists(file_path):
-                                    with open(file_path, 'r', encoding='utf-8') as f:
-                                        content = f.read().strip()
-                                        
-                                    # 3. 提取 pick_code
-                                    if content.startswith('etk_direct_play://'):
-                                        pick_code = content.split('//')[1].split('/')[0]
-                                        
-                                        # 4. 实时解析 115 直链并 302 重定向！
-                                        from handler.p115_service import P115Service
-                                        client = P115Service.get_client()
-                                        if client:
-                                            # 使用请求头中的 User-Agent 申请直链
-                                            player_ua = request.headers.get('User-Agent', 'Mozilla/5.0')
-                                            url_obj = client.download_url(pick_code, user_agent=player_ua)
-                                            real_url = str(url_obj)
-                                            
-                                            logger.info(f"  🎬 [反代直链解析] 拦截到播放请求，302 跳转至 115 CDN...")
-                                            from flask import redirect
-                                            return redirect(real_url, code=302)
-                    except Exception as e:
-                        logger.error(f"  ❌ 尝试拦截并解析直链时出错: {e}")
+                    resp = requests.get(details_url, params={'api_key': api_key, 'UserId': user_id}, timeout=5)
+                    
+                    if resp.status_code == 200:
+                        item_data = resp.json()
+                        file_path = item_data.get('Path', '')
+                        
+                        # 3. 核心判断：是我们的 .strm 文件吗？
+                        if file_path and file_path.endswith('.strm') and os.path.exists(file_path):
+                            with open(file_path, 'r', encoding='utf-8') as f:
+                                strm_content = f.read().strip()
+                                
+                            # 4. 从我们生成的 URL 中提取 pick_code
+                            # 格式是 http://ip:port/api/p115/play/xxxxxx
+                            if '/api/p115/play/' in strm_content:
+                                pick_code = strm_content.split('/play/')[-1].split('?')[0].strip()
+                                
+                                # 5. 实时调用 115 接口获取直链并直接返回 302 给客户端！
+                                from handler.p115_service import P115Service
+                                client = P115Service.get_client()
+                                if client:
+                                    player_ua = request.headers.get('User-Agent', 'Mozilla/5.0')
+                                    url_obj = client.download_url(pick_code, user_agent=player_ua)
+                                    real_url = str(url_obj)
+                                    
+                                    if real_url:
+                                        logger.info(f"  🎬 [反代直链劫持] 成功拦截 Emby 流请求，直接 302 重定向至 115 CDN！")
+                                        from flask import redirect
+                                        return redirect(real_url, code=302)
+            except Exception as e:
+                logger.error(f"  ❌ 尝试拦截并解析直链时出错，回退到原生播放: {e}")
 
         # --- 拦截 A: 虚拟项目海报图片 ---
         if path.startswith('emby/Items/') and '/Images/Primary' in path:

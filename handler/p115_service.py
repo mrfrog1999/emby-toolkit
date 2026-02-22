@@ -807,10 +807,8 @@ class SmartOrganizer:
                         strm_filename = os.path.splitext(new_filename)[0] + ".strm"
                         strm_filepath = os.path.join(local_dir, strm_filename)
                         
-                        # ★ 终极破局：不再使用 http://，而是使用一种特殊的标记前缀
-                        # Emby 在扫描时会将其作为普通流媒体处理
-                        # 我们把 pick_code 藏在文件名里
-                        strm_content = f"etk_direct_play://{pick_code}/{new_filename}"
+                        # ★ 恢复：使用 ETK 的本地路由，保证 Emby 扫库和基础识别不报错
+                        strm_content = f"{etk_url}/api/p115/play/{pick_code}"
                         
                         # 4. 写入硬盘
                         with open(strm_filepath, 'w', encoding='utf-8') as f:
