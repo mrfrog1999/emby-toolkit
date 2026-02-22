@@ -1099,53 +1099,104 @@ def task_scan_and_organize_115(processor=None):
 
 def task_sync_115_directory_tree(processor=None):
     """
-    主动同步 115 分类目录下的所有子目录到本地 DB 缓存。
+    [任务链] 主动同步 115 分类目录下的所有子目录到本地 DB 缓存。
     这能彻底解决 115 API search_value 失效导致的老目录无法识别问题。
     """
     logger.info("=== 开始全量同步 115 目录树到本地数据库 ===")
+    
+    # 局部导入 task_manager 用于向前端发送实时进度 (防止与 core.py 循环引用)
+    try:
+        import task_manager
+    except ImportError:
+        task_manager = None
+
+    def update_progress(prog, msg):
+        if task_manager:
+            task_manager.update_status_from_thread(prog, msg)
+        logger.info(msg)
+
     client = P115Service.get_client()
-    if not client: return
+    if not client: 
+        update_progress(100, "115 客户端未初始化，任务结束。")
+        return
 
     raw_rules = settings_db.get_setting(constants.DB_KEY_115_SORTING_RULES)
-    if not raw_rules: return
+    if not raw_rules: 
+        update_progress(100, "未配置分类规则，无需同步。")
+        return
     
     rules = json.loads(raw_rules) if isinstance(raw_rules, str) else raw_rules
+    
+    # 提取所有启用的规则中的目标分类目录 CID，并去重
     target_cids = set()
     for rule in rules:
         if rule.get('enabled', True) and rule.get('cid'):
-            target_cids.add(str(rule['cid']))
+            cid_str = str(rule['cid'])
+            if cid_str and cid_str != '0':
+                target_cids.add(cid_str)
+
+    if not target_cids:
+        update_progress(100, "未找到有效的分类目标目录 CID，任务结束。")
+        return
 
     total_cached = 0
-    for cid in target_cids:
-        logger.info(f"  🔍 正在缓存分类目录 (CID: {cid}) 下的所有子目录...")
+    total_cids = len(target_cids)
+    
+    for idx, cid in enumerate(target_cids):
+        base_prog = int((idx / total_cids) * 100)
+        update_progress(base_prog, f"正在扫描第 {idx+1}/{total_cids} 个分类目录 (CID: {cid})...")
+        
         offset = 0
         limit = 1000
+        page_count = 0
+        
         while True:
+            # 响应前端的中止任务按钮
+            if processor and getattr(processor, 'is_stop_requested', lambda: False)():
+                update_progress(100, "任务已被用户手动终止。")
+                return
+
             try:
-                # 只获取文件夹 (type=0)
-                res = client.fs_files({'cid': cid, 'limit': limit, 'offset': offset, 'type': 0})
+                # 获取数据列表
+                res = client.fs_files({'cid': cid, 'limit': limit, 'offset': offset})
                 data = res.get('data', [])
-                if not data: break
+                
+                if not data: 
+                    break # 本目录全空，跳出
+                
+                page_count += 1
+                dir_count_in_page = 0
                 
                 with get_db_connection() as conn:
                     with conn.cursor() as cursor:
                         for item in data:
-                            sub_cid = item.get('cid')
-                            sub_name = item.get('n')
-                            if sub_cid and sub_name:
-                                cursor.execute("""
-                                    INSERT INTO p115_filesystem_cache (id, parent_id, name, is_directory)
-                                    VALUES (%s, %s, %s, TRUE)
-                                    ON CONFLICT (parent_id, name, is_directory)
-                                    DO UPDATE SET id = EXCLUDED.id, updated_at = NOW()
-                                """, (str(sub_cid), str(cid), str(sub_name)))
-                                total_cached += 1
+                            # ★ 核心：没有 fid 的项目才是文件夹
+                            if not item.get('fid'):
+                                sub_cid = item.get('cid')
+                                sub_name = item.get('n')
+                                if sub_cid and sub_name:
+                                    cursor.execute("""
+                                        INSERT INTO p115_filesystem_cache (id, parent_id, name, is_directory)
+                                        VALUES (%s, %s, %s, TRUE)
+                                        ON CONFLICT (parent_id, name, is_directory)
+                                        DO UPDATE SET id = EXCLUDED.id, updated_at = NOW()
+                                    """, (str(sub_cid), str(cid), str(sub_name)))
+                                    total_cached += 1
+                                    dir_count_in_page += 1
                         conn.commit()
                 
+                # 实时播报当前正在翻第几页，以及入库了多少个文件夹
+                update_progress(base_prog, f"  ➜ CID: {cid} | 翻阅第 {page_count} 页 | 新增/更新 {dir_count_in_page} 个目录...")
+                
+                # ★ 性能优化：如果获取的数据小于请求的上限，说明到底了，不用再请求下一页
+                if len(data) < limit:
+                    break
+                    
                 offset += limit
-                time.sleep(1) # 限流
+                time.sleep(0.5) # 稍微喘口气，防 115 踢人
+                
             except Exception as e:
-                logger.error(f"同步目录树异常: {e}")
-                break
+                logger.error(f"  ❌ 同步目录树异常 (CID: {cid}): {e}")
+                break # 发生异常，跳过这个 CID 继续查下一个
 
-    logger.info(f"=== 同步完成，共更新 {total_cached} 个目录的 DB 缓存 ===")
+    update_progress(100, f"=== 同步完美结束！共成功更新 {total_cached} 个目录的极速缓存 ===")
