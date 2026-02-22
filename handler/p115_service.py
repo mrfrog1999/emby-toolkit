@@ -779,7 +779,7 @@ class SmartOrganizer:
                     
                     if s_cid:
                         P115CacheManager.save_cid(s_cid, final_home_cid, s_name)
-                        logger.info(f"  ✅ 季目录已入缓存: {std_root_name} - {s_name}")
+                        logger.info(f"  🆕 创建季目录并缓存: {std_root_name} - {s_name}")
                         real_target_cid = s_cid
 
             # 3. 先改名
