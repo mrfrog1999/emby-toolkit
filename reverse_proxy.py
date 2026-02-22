@@ -856,9 +856,12 @@ def proxy_all(path):
         enable_sync_delete = config_manager.APP_CONFIG.get(constants.CONFIG_OPTION_115_ENABLE_SYNC_DELETE, False)
         
         # 只有在开启了开关，且是 DELETE 请求时，才执行联动删除逻辑
-        if enable_sync_delete and request.method == 'DELETE' and re.search(r'/Items/([a-zA-Z0-9]+)$', full_path):
+        # 匹配 /emby/Items/123 或 /Items/123，且 ID 支持数字、字母、连字符
+        delete_match = re.search(r'/Items/([a-zA-Z0-9\-]+)', full_path, re.IGNORECASE)
+
+        if enable_sync_delete and request.method == 'DELETE' and delete_match:
             try:
-                item_id = re.search(r'/Items/([a-zA-Z0-9]+)$', full_path).group(1)
+                item_id = delete_match.group(1)
                 base_url, api_key = _get_real_emby_url_and_key()
                 user_id = request.args.get('UserId') or request.args.get('api_key') or "admin"
                 

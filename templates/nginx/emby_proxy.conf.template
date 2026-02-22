@@ -83,9 +83,11 @@ server {
     }
 
     # 拦截 Emby 删除操作，强制转交 ETK 实现 115 网盘联动删除
-    location ~ /Items/[a-zA-Z0-9]+$ {
+    location ~* /Items/[^/]+$ {
         if ($request_method = "DELETE") {
             proxy_pass http://virtual_library_proxy;
+            # 必须 break 或 ensure 不执行下面的逻辑
+            break; 
         }
         proxy_pass http://emby_server;
     }
