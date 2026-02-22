@@ -154,7 +154,7 @@ def play_115_video(pick_code):
         
         # 调用 115 官方接口，拿 pick_code 换取临时带签名的直链
         # p115client 支持 fs_download_url，直接返回详情字典
-        download_info = client.fs_download_url(pick_code)
+        download_info = client.download_url(pick_code)
         
         real_url = download_info.get('url')
         if not real_url:
