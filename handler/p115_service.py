@@ -788,29 +788,67 @@ class SmartOrganizer:
                         if not category_name: category_name = "未识别"
 
                         # 2. 拼接本地绝对路径
-                        top_folder = "电视剧" if self.media_type == 'tv' else "电影"
+                        media_root_cid = str(config.get(constants.CONFIG_OPTION_115_MEDIA_ROOT_CID, '0'))
+                        
+                        # 使用类变量做内存缓存，避免对同一个分类目录反复请求 115 接口
+                        if not hasattr(self.__class__, '_category_path_cache'):
+                            self.__class__._category_path_cache = {}
+                            
+                        if str(target_cid) not in self.__class__._category_path_cache:
+                            try:
+                                # 极速请求一次目标目录的信息，115 会返回完整的父级链路 path
+                                dir_info = self.client.fs_files({'cid': target_cid, 'limit': 1})
+                                path_nodes = dir_info.get('path', [])
+                                
+                                start_idx = 0
+                                found_root = False
+                                
+                                # 在链路中寻找用户配置的“媒体库根目录”
+                                if media_root_cid == '0':
+                                    start_idx = 1 # 跳过 115 的物理根目录 "根目录"
+                                    found_root = True
+                                else:
+                                    for i, node in enumerate(path_nodes):
+                                        if str(node.get('cid')) == media_root_cid:
+                                            start_idx = i + 1 # 从根目录的下一级开始取
+                                            found_root = True
+                                            break
+                                
+                                if found_root and start_idx < len(path_nodes):
+                                    # 完美提取中间所有的层级！例如: ['动漫', '连载中', '热血']
+                                    rel_segments = [str(n.get('name')).strip() for n in path_nodes[start_idx:]]
+                                    self.__class__._category_path_cache[str(target_cid)] = os.path.join(*rel_segments)
+                                else:
+                                    # 兜底：如果层级异常，用规则里配的名称
+                                    fallback_name = next((r.get('dir_name') for r in self.rules if str(r.get('cid')) == str(target_cid)), "未识别")
+                                    self.__class__._category_path_cache[str(target_cid)] = fallback_name
+                            except Exception as e:
+                                logger.warning(f"获取目录路径层级失败: {e}")
+                                self.__class__._category_path_cache[str(target_cid)] = "未识别"
 
-                        # 2. 拼接本地绝对路径 (现在变成了: /strm根目录/电视剧/华语剧/剧集名/Season 01)
+                        # 拿到完美对应的相对路径 (例如: "纪录片/BBC")
+                        relative_category_path = self.__class__._category_path_cache[str(target_cid)]
+
+                        # 2. 拼接本地绝对路径 (现在它和 115 网盘的层级 100% 对应了！)
                         if self.media_type == 'tv' and season_num is not None:
-                            local_dir = os.path.join(local_root, top_folder, category_name, std_root_name, s_name)
+                            local_dir = os.path.join(local_root, relative_category_path, std_root_name, s_name)
                         else:
-                            local_dir = os.path.join(local_root, top_folder, category_name, std_root_name)
+                            local_dir = os.path.join(local_root, relative_category_path, std_root_name)
                         
                         os.makedirs(local_dir, exist_ok=True) # 自动创建本地文件夹结构
 
                         # 3. 构造 strm 文件名和直链内容
-                        # 如果新文件名带有 .mkv 等后缀，将其替换为 .strm
                         strm_filename = os.path.splitext(new_filename)[0] + ".strm"
                         strm_filepath = os.path.join(local_dir, strm_filename)
                         
-                        # ★ 恢复：使用 ETK 的本地路由，保证 Emby 扫库和基础识别不报错
+                        # 写入标准的内网 ETK 链接
                         strm_content = f"{etk_url}/api/p115/play/{pick_code}"
                         
                         # 4. 写入硬盘
                         with open(strm_filepath, 'w', encoding='utf-8') as f:
                             f.write(strm_content)
                             
-                        logger.info(f"  📝 [STRM生成] 已生成本地直链文件: {strm_filepath}")
+                        logger.info(f"  📝 [STRM生成] 已镜像网盘层级并生成文件: {strm_filepath}")
                         
                         # ★ 进阶福利：如果是字幕文件 (.ass / .srt)，我们其实也可以直接把它下到本地！
                         # （Emby 挂载本地字幕体验最好，这部分以后你要加的话，老六再给你写代码）

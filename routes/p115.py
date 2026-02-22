@@ -2,11 +2,12 @@
 import logging
 from flask import redirect
 import json
+import os
 import time
 from flask import Blueprint, jsonify, request, redirect
 from extensions import admin_required
 from database import settings_db
-from handler.p115_service import P115Service
+from handler.p115_service import P115Service, get_config
 import constants
 from functools import lru_cache
 p115_bp = Blueprint('p115_bp', __name__, url_prefix='/api/p115')
@@ -176,3 +177,48 @@ def play_115_video(pick_code):
     except Exception as e:
         logger.error(f"  ❌ 直链解析发生异常: {e}")
         return str(e), 500
+    
+@p115_bp.route('/fix_strm', methods=['POST'])
+@admin_required
+def fix_strm_files():
+    """扫描并修正本地所有 .strm 文件的内部链接"""
+    config = get_config()
+    local_root = config.get(constants.CONFIG_OPTION_LOCAL_STRM_ROOT)
+    etk_url = config.get(constants.CONFIG_OPTION_ETK_SERVER_URL, "").rstrip('/')
+    
+    if not local_root or not os.path.exists(local_root):
+        return jsonify({"success": False, "message": "未配置本地 STRM 根目录，或该目录在容器中不存在！"}), 400
+    if not etk_url:
+        return jsonify({"success": False, "message": "未配置 ETK 内部访问地址！"}), 400
+        
+    fixed_count = 0
+    try:
+        # 递归遍历整个本地 STRM 目录
+        for root_dir, _, files in os.walk(local_root):
+            for file in files:
+                if file.endswith('.strm'):
+                    file_path = os.path.join(root_dir, file)
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            content = f.read().strip()
+                        
+                        # 兼容提取旧版的 pick_code
+                        pick_code = None
+                        if '/api/p115/play/' in content:
+                            pick_code = content.split('/api/p115/play/')[-1].split('?')[0].strip()
+                        elif content.startswith('etk_direct_play://'):
+                            pick_code = content.split('//')[1].split('/')[0].strip()
+                            
+                        if pick_code:
+                            # 替换为当前最新的 etk_url
+                            new_content = f"{etk_url}/api/p115/play/{pick_code}"
+                            if content != new_content:
+                                with open(file_path, 'w', encoding='utf-8') as f:
+                                    f.write(new_content)
+                                fixed_count += 1
+                    except Exception as e:
+                        logger.error(f"  ❌ 处理文件 {file_path} 失败: {e}")
+        
+        return jsonify({"success": True, "message": f"洗刷完毕！成功扫描并修正了 {fixed_count} 个 .strm 文件的链接。"})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500

@@ -11,7 +11,7 @@ import config_manager
 import constants
 import utils
 import handler.tmdb as tmdb
-from handler.p115_service import P115Service, SmartOrganizer, logger, notify_cms_scan
+from handler.p115_service import P115Service, SmartOrganizer, logger
 
 logger = logging.getLogger(__name__)
 
@@ -764,11 +764,8 @@ def handle_push_request(link, title, tmdb_id=None, media_type=None):
     """
     统一推送入口
     """
-    # 1. 推送到 115 (传递 ID 以便重命名)
+    # 推送到 115 (传递 ID 以便重命名)
     push_to_115(link, title, tmdb_id, media_type)
-    
-    # 2. 115 成功后，通知 CMS 整理
-    notify_cms_scan()
     
     return True
 

@@ -291,6 +291,14 @@
                         </n-text>
                       </template>
                     </n-form-item>
+                    <n-form-item label="批量修正 STRM" path="">
+                        <n-button @click="handleFixStrm" :loading="isFixingStrm" type="warning" ghost>
+                            一键更新本地所有 STRM 链接
+                        </n-button>
+                        <template #feedback>
+                            <n-text depth="3" style="font-size:0.8em;">当你修改了“ETK 内部访问地址”后，点击此按钮可批量把本地硬盘里所有的 .strm 文件更新为新地址，省去重刮削的麻烦。</n-text>
+                        </template>
+                    </n-form-item>
                   </n-card>
                 </n-gi>
 
@@ -469,7 +477,7 @@
                 <!-- ########## 右侧卡片: 虚拟库 (反向代理) ########## -->
                 <n-gi>
                   <n-card :bordered="false" class="dashboard-card">
-                    <template #header><span class="card-title">虚拟库</span></template>
+                    <template #header><span class="card-title">虚拟库反代</span></template>
                     
                     <!-- 同样使用紧凑双列 -->
                     <n-grid cols="1 m:2" :x-gap="12" :y-gap="12" responsive="screen">
@@ -1379,6 +1387,7 @@ import {
 import { useConfig } from '../../composables/useConfig.js';
 import axios from 'axios';
 
+const isFixingStrm = ref(false);
 const promptModalVisible = ref(false);
 const loadingPrompts = ref(false);
 const savingPrompts = ref(false);
@@ -1389,6 +1398,23 @@ const promptsModel = ref({
   title_translation: '',
   transliterate_mode: ''
 });
+
+// 一键更换strm地址
+const handleFixStrm = async () => {
+  isFixingStrm.value = true;
+  try {
+    const response = await axios.post('/api/p115/fix_strm');
+    if (response.data.success) {
+      message.success(response.data.message);
+    } else {
+      message.error(response.data.message);
+    }
+  } catch (error) {
+    message.error(error.response?.data?.message || '请求失败');
+  } finally {
+    isFixingStrm.value = false;
+  }
+};
 
 const tableInfo = {
   'app_settings': { cn: '基础配置', isSharable: false },
