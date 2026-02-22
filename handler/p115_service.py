@@ -1243,7 +1243,7 @@ def task_sync_115_directory_tree(processor=None):
 
 def task_full_sync_strm_and_subs(processor=None):
     """
-    极速全量生成 STRM 与 同步字幕
+    极速全量生成 STRM 与 同步字幕 (已修复路径解析与扩展名过滤)
     """
     logger.info("=== 🚀 开始极速全量生成 STRM 与 同步字幕 ===")
     
@@ -1259,9 +1259,14 @@ def task_full_sync_strm_and_subs(processor=None):
     config = get_config()
     local_root = config.get(constants.CONFIG_OPTION_LOCAL_STRM_ROOT)
     etk_url = config.get(constants.CONFIG_OPTION_ETK_SERVER_URL, "").rstrip('/')
-    allowed_exts = set(e.lower() for e in config.get(constants.CONFIG_OPTION_115_EXTENSIONS, []))
+    
     known_video_exts = {'mp4', 'mkv', 'avi', 'ts', 'iso', 'rmvb', 'wmv', 'mov', 'm2ts', 'flv', 'mpg'}
     known_sub_exts = {'srt', 'ass', 'ssa', 'sub', 'vtt', 'sup'}
+    
+    # ★ 修复1：如果用户未配置扩展名，提供默认兜底，防止全部跳过
+    allowed_exts = set(e.lower() for e in config.get(constants.CONFIG_OPTION_115_EXTENSIONS, []))
+    if not allowed_exts:
+        allowed_exts = known_video_exts | known_sub_exts
     
     if not local_root or not etk_url:
         update_progress(100, "错误：未配置本地 STRM 根目录或 ETK 访问地址！")
@@ -1273,9 +1278,15 @@ def task_full_sync_strm_and_subs(processor=None):
     raw_rules = settings_db.get_setting(constants.DB_KEY_115_SORTING_RULES)
     if not raw_rules: return
     rules = json.loads(raw_rules) if isinstance(raw_rules, str) else raw_rules
-    target_cids = list(set(str(r['cid']) for r in rules if r.get('enabled', True) and r.get('cid') and str(r['cid']) != '0'))
+    
+    # ★ 修复2：建立 CID 到 分类目录名 的映射，用于拼接本地路径
+    cid_to_category = {}
+    for r in rules:
+        if r.get('enabled', True) and r.get('cid') and str(r['cid']) != '0':
+            cid_to_category[str(r['cid'])] = r.get('dir_name', '未识别')
+            
+    target_cids = list(cid_to_category.keys())
 
-    # 导入大佬的极速遍历函数
     try:
         from p115client.tool.iterdir import iter_files_with_path_skim
     except ImportError:
@@ -1285,55 +1296,61 @@ def task_full_sync_strm_and_subs(processor=None):
     total_cids = len(target_cids)
     for idx, base_cid in enumerate(target_cids):
         base_prog = int((idx / total_cids) * 100)
-        update_progress(base_prog, f"正在极速遍历分类 CID: {base_cid} ...")
+        category_name = cid_to_category.get(base_cid, '未识别')
+        update_progress(base_prog, f"正在极速遍历分类 [{category_name}] CID: {base_cid} ...")
         
         try:
-            # 大佬的函数直接吐出所有子文件，带完整路径！
             for info in iter_files_with_path_skim(client, base_cid):
                 if processor and getattr(processor, 'is_stop_requested', lambda: False)():
                     update_progress(100, "任务已被用户手动终止。")
                     return
+                
+                # ★ 修复3：将单文件处理放入独立 try 块，防止单个文件报错导致整个目录跳过
+                try:
+                    name = info.get('name', '')
+                    ext = name.split('.')[-1].lower() if '.' in name else ''
+                    if ext not in allowed_exts: continue
                     
-                name = info.get('name', '')
-                ext = name.split('.')[-1].lower() if '.' in name else ''
-                if ext not in allowed_exts: continue
-                
-                pc = info.get('pc') or info.get('pickcode')
-                if not pc: continue
-                
-                # info['path'] 通常是一个包含路径节点字典的列表
-                # 我们提取出从 base_cid 开始的相对路径
-                path_nodes = info.get('path', [])
-                rel_path_parts = [str(p.get('name')) for p in path_nodes[1:]] # 跳过根节点
-                
-                current_local_path = os.path.join(local_root, *rel_path_parts)
-                os.makedirs(current_local_path, exist_ok=True)
-                
-                if ext in known_video_exts:
-                    strm_name = os.path.splitext(name)[0] + ".strm"
-                    strm_path = os.path.join(current_local_path, strm_name)
-                    content = f"{etk_url}/api/p115/play/{pc}"
+                    pc = info.get('pc') or info.get('pickcode')
+                    if not pc: continue
                     
-                    need_write = True
-                    if os.path.exists(strm_path):
-                        with open(strm_path, 'r', encoding='utf-8') as f:
-                            if f.read().strip() == content: need_write = False
-                            
-                    if need_write:
-                        with open(strm_path, 'w', encoding='utf-8') as f: f.write(content)
-                        logger.debug(f"生成 STRM: {strm_name}")
+                    # ★ 修复4：p115client 返回的 path 是字符串 (如 "/电影名/视频.mkv")
+                    raw_path = info.get('path', '')
+                    dir_path = os.path.dirname(raw_path) # 提取所在目录路径 (如 "/电影名")
+                    # 去除首尾斜杠并分割成列表
+                    rel_path_parts = [p for p in dir_path.split('/') if p] 
+                    
+                    # 拼接本地绝对路径：本地根目录 / 分类名 / 相对路径
+                    current_local_path = os.path.join(local_root, category_name, *rel_path_parts)
+                    os.makedirs(current_local_path, exist_ok=True)
+                    
+                    if ext in known_video_exts:
+                        strm_name = os.path.splitext(name)[0] + ".strm"
+                        strm_path = os.path.join(current_local_path, strm_name)
+                        content = f"{etk_url}/api/p115/play/{pc}"
                         
-                elif ext in known_sub_exts:
-                    sub_path = os.path.join(current_local_path, name)
-                    if not os.path.exists(sub_path):
-                        import requests
-                        url_obj = client.download_url(pc, user_agent="Mozilla/5.0")
-                        if url_obj:
-                            resp = requests.get(str(url_obj), stream=True, timeout=15)
-                            resp.raise_for_status()
-                            with open(sub_path, 'wb') as f:
-                                for chunk in resp.iter_content(8192): f.write(chunk)
-                            logger.debug(f"补齐字幕: {name}")
+                        need_write = True
+                        if os.path.exists(strm_path):
+                            with open(strm_path, 'r', encoding='utf-8') as f:
+                                if f.read().strip() == content: need_write = False
+                                
+                        if need_write:
+                            with open(strm_path, 'w', encoding='utf-8') as f: f.write(content)
+                            logger.debug(f"生成 STRM: {strm_name}")
+                            
+                    elif ext in known_sub_exts:
+                        sub_path = os.path.join(current_local_path, name)
+                        if not os.path.exists(sub_path):
+                            import requests
+                            url_obj = client.download_url(pc, user_agent="Mozilla/5.0")
+                            if url_obj:
+                                resp = requests.get(str(url_obj), stream=True, timeout=15)
+                                resp.raise_for_status()
+                                with open(sub_path, 'wb') as f:
+                                    for chunk in resp.iter_content(8192): f.write(chunk)
+                                logger.debug(f"补齐字幕: {name}")
+                except Exception as e:
+                    logger.error(f"处理文件异常 [{name}]: {e}")
                             
         except Exception as e:
             logger.error(f"极速遍历出错 CID:{base_cid}: {e}")
