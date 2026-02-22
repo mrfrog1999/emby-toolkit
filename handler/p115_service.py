@@ -1377,7 +1377,7 @@ def task_full_sync_strm_and_subs(processor=None):
     for idx, base_cid in enumerate(target_cids):
         base_prog = int((idx / total_cids) * 100)
         category_rel_path = cid_to_rel_path.get(base_cid)
-        update_progress(base_prog, f"正在同步层级: {category_rel_path} (CID: {base_cid}) ...")
+        update_progress(base_prog, f"  ➜ 正在同步层级: {category_rel_path} (CID: {base_cid}) ...")
         
         items_yielded = 0
         files_generated = 0
@@ -1411,7 +1411,7 @@ def task_full_sync_strm_and_subs(processor=None):
 
         # B. 自动降级：如果极速模式没出货，启动标准递归
         if items_yielded == 0:
-            logger.warning(f"⚠️ 极速遍历未发现文件，正在使用标准递归扫描...")
+            logger.warning(f"  ⚠️ 极速遍历未发现文件，正在使用标准递归扫描...")
             def reliable_recursive_scan(cid, current_parts):
                 offset = 0
                 limit = 1000
@@ -1432,7 +1432,7 @@ def task_full_sync_strm_and_subs(processor=None):
             except Exception as e:
                 logger.error(f"标准扫描异常 CID:{base_cid}: {e}")
                 
-        logger.info(f"✅ [{category_rel_path}] 同步完成，处理文件: {files_generated}")
+        logger.info(f"  ✅ [{category_rel_path}] 同步完成，处理文件: {files_generated}")
 
     update_progress(100, "=== 全量 STRM 与字幕同步完美结束 ===")
 
