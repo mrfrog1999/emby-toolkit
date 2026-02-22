@@ -825,24 +825,21 @@ def proxy_all(path):
                                     logger.info(f"  🎬 [反代劫持] 成功拦截 Emby 流请求，下发 115 CDN 直链！")
                                     from flask import redirect
                                     
-                                    # 如果是 PlaybackInfo 请求 (客户端起播前的嗅探)，需要特殊伪装
+                                    # 如果是 PlaybackInfo 请求，返回给客户端的 Path 应该是原始的 strm 地址或者再次经过我们代理的地址
                                     if 'PlaybackInfo' in full_path:
-                                         # 骗过 Emby 客户端，告诉它这是一个外部直接播放流
-                                         fake_info = {
-                                             "MediaSources": [{
-                                                 "Id": item_id,
-                                                 "Path": real_url,
-                                                 "Protocol": "Http",
-                                                 "IsInfiniteStream": False,
-                                                 "RequiresOpening": False,
-                                                 "RequiresClosing": False,
-                                                 "SupportsDirectPlay": True,
-                                                 "SupportsDirectStream": True,
-                                                 "SupportsTranscoding": False
-                                             }],
-                                             "PlaySessionId": "etk_direct_play_session"
-                                         }
-                                         return Response(json.dumps(fake_info), mimetype='application/json')
+                                        fake_info = {
+                                            "MediaSources": [{
+                                                "Id": item_id,
+                                                "Path": real_url, # 确保这里的 real_url 是带 UA 签名的
+                                                "Protocol": "Http",
+                                                "IsInfiniteStream": False,
+                                                "SupportsDirectPlay": True,
+                                                "SupportsDirectStream": True,
+                                                "SupportsTranscoding": False
+                                            }],
+                                            "PlaySessionId": "etk_proxy_" + str(time.time())
+                                        }
+                                        return Response(json.dumps(fake_info), mimetype='application/json')
                                     
                                     # 真正的视频流请求，直接 302 甩出去
                                     return redirect(real_url, code=302)

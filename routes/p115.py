@@ -138,14 +138,15 @@ def handle_sorting_rules():
         settings_db.save_setting(constants.DB_KEY_115_SORTING_RULES, rules)
         return jsonify({"status": "success", "message": "115 分类规则已保存"})
     
-@lru_cache(maxsize=1024)
-def _get_cached_115_url(pick_code, user_agent):
+@lru_cache(maxsize=2048)
+def _get_cached_115_url(pick_code, user_agent, client_ip=None):
     """
     带缓存的 115 直链获取器
     """
     client = P115Service.get_client()
     if not client: return None
     try:
+        # 这里的 user_agent 必须是播放器的真实 UA
         url_obj = client.download_url(pick_code, user_agent=user_agent)
         return str(url_obj) if url_obj else None
     except Exception as e:
