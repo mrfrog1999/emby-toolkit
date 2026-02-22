@@ -141,28 +141,17 @@ def handle_sorting_rules():
 @p115_bp.route('/play/<pick_code>', methods=['GET'])
 def play_115_video(pick_code):
     client = P115Service.get_client()
-    if not client:
-        return "115 Client Not Initialized", 500
-        
+    ua = request.headers.get('User-Agent') # 这里的 UA 必须由 Nginx 传过来
+    
     try:
-        # 获取前端（播放器）传来的真实 UA
-        ua = request.headers.get('User-Agent')
-        
-        # 调用接口时传入 UA
-        # 注意：这里根据你提供的接口定义，使用 user_agent 参数
+        # 显式传递 ua 参数
         url_info = client.download_url(pick_code, user_agent=ua)
-        
-        # 将 P115URL 对象转为字符串链接
         real_url = str(url_info)
         
-        if not real_url or "http" not in real_url:
-            return "Cannot get video stream from 115", 404
-            
-        logger.info(f"  🎬 [302 跳转] UA: {ua[:30]}... -> URL: {real_url[:50]}...")
+        # 日志记录 UA 的前 20 位，方便排查 Nginx 是否传对了
+        logger.info(f"  🎬 转发成功 | UA: {ua[:20]}... | URL: {real_url[:30]}...")
         
-        # 返回 302 重定向
         return redirect(real_url, code=302)
-        
     except Exception as e:
         logger.error(f"  ❌ 解析失败: {e}")
         return str(e), 500
