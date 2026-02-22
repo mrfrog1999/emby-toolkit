@@ -1099,7 +1099,7 @@ def task_scan_and_organize_115(processor=None):
 
 def task_sync_115_directory_tree(processor=None):
     """
-    [任务链] 主动同步 115 分类目录下的所有子目录到本地 DB 缓存。
+    主动同步 115 分类目录下的所有子目录到本地 DB 缓存。
     这能彻底解决 115 API search_value 失效导致的老目录无法识别问题。
     """
     logger.info("=== 开始全量同步 115 目录树到本地数据库 ===")
@@ -1144,7 +1144,7 @@ def task_sync_115_directory_tree(processor=None):
     
     for idx, cid in enumerate(target_cids):
         base_prog = int((idx / total_cids) * 100)
-        update_progress(base_prog, f"正在扫描第 {idx+1}/{total_cids} 个分类目录 (CID: {cid})...")
+        update_progress(base_prog, f"  🔍 正在扫描第 {idx+1}/{total_cids} 个分类目录 (CID: {cid})...")
         
         offset = 0
         limit = 1000
@@ -1193,10 +1193,10 @@ def task_sync_115_directory_tree(processor=None):
                     break
                     
                 offset += limit
-                time.sleep(0.5) # 稍微喘口气，防 115 踢人
+                time.sleep(1) # 稍微喘口气，防 115 踢人
                 
             except Exception as e:
                 logger.error(f"  ❌ 同步目录树异常 (CID: {cid}): {e}")
                 break # 发生异常，跳过这个 CID 继续查下一个
 
-    update_progress(100, f"=== 同步完美结束！共成功更新 {total_cached} 个目录的极速缓存 ===")
+    update_progress(100, f"=== 同步结束！共成功更新 {total_cached} 个目录的缓存 ===")
