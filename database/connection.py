@@ -410,7 +410,7 @@ def init_db():
                         
                         -- 复合唯一约束：同一个父目录下不能有同名文件 (用于快速查找)
                         -- 注意：115 实际上允许同名，但在我们的管理逻辑中通常假设唯一，或者只缓存最新的
-                        CONSTRAINT uniq_p115_parent_name UNIQUE (parent_id, name, is_directory)
+                        CONSTRAINT uniq_p115_parent_name UNIQUE (parent_id, name)
                     )
                 """)
 
