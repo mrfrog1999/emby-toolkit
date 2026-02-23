@@ -812,37 +812,27 @@ def proxy_all(path):
                             # 1. 提取 pick_code
                             pick_code = strm_url.split('/play/')[-1].split('?')[0].strip()
                             
-                            # 2. 反代层亲自去拿 115 真实直链
-                            player_ua = request.headers.get('User-Agent', 'Mozilla/5.0')
-                            client_ip = request.headers.get('X-Real-IP', request.remote_addr)
-                            real_115_cdn_url = _get_cached_115_url(pick_code, player_ua, client_ip)
+                            # 2. 构造我们自己的 302 引导链接 (不要在这里去请求 115！)
+                            client_scheme = request.headers.get('X-Forwarded-Proto', request.scheme)
+                            host = request.headers.get('Host')
+                            # 加上 /video.mp4 后缀，满足部分挑剔的客户端(如安卓TV/苹果)必须看到扩展名才肯播放的毛病
+                            fake_direct_url = f"{client_scheme}://{host}/api/p115/play/{pick_code}/video.mp4"
                             
-                            # 3. 如果拿到了真实直链，直接塞给客户端！
-                            if real_115_cdn_url:
-                                source['DirectStreamUrl'] = real_115_cdn_url
-                                # 欺骗 1：解决外网 HTTPS 混合内容拦截
-                                client_scheme = request.headers.get('X-Forwarded-Proto', request.scheme)
-                                if client_scheme == 'https' and real_115_cdn_url.startswith('http://'):
-                                    real_115_cdn_url = real_115_cdn_url.replace('http://', 'https://', 1)
-
-                                # ★★★ 核心修复：防止客户端瞎拼接 URL ★★★
-                                source['Path'] = real_115_cdn_url
-                                source['IsRemote'] = True  # <--- 极其关键！告诉客户端这是外部独立直链
-                                
-                                # 强行删掉 Emby 内部的流地址，逼迫客户端只能读取 Path 里的直链
-                                source.pop('DirectStreamUrl', None) 
-                                source.pop('TranscodingUrl', None) 
-                                
-                                source['Protocol'] = 'Http'
-                                source['SupportsDirectPlay'] = True
-                                # 既然是外部直链，就不需要 Emby 的内部 DirectStream 了
-                                source['SupportsDirectStream'] = False 
-                                source['SupportsTranscoding'] = False
-                                
-                                # 欺骗 2：解决外网码率限制导致的强行转码
-                                # source['Bitrate'] = 1000000 
-                                
-                                modified = True
+                            # 3. 完美伪装 MediaSource，逼迫客户端播放器亲自来请求
+                            source['Path'] = fake_direct_url
+                            source['DirectStreamUrl'] = fake_direct_url # 必须保留，很多客户端依赖这个
+                            source['IsRemote'] = True
+                            
+                            source['Protocol'] = 'Http'
+                            source['SupportsDirectPlay'] = True
+                            source['SupportsDirectStream'] = True  # 允许直推，防止客户端直接报错
+                            source['SupportsTranscoding'] = False  # 绝对禁止服务端转码
+                            
+                            # 移除码率限制，防止客户端因为觉得码率过高而向服务端请求转码
+                            source.pop('Bitrate', None)
+                            
+                            modified = True
+                            logger.info(f"  🎬 [PlaybackInfo] 已下发 302 引导链接，等待播放器真实 UA 握手！")
                             
                     if modified:
                         logger.info(f"  🎬 [PlaybackInfo] 识别为客户端，已将 115 真实 CDN 直链喂到嘴里！")
