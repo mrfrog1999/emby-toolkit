@@ -812,27 +812,30 @@ def proxy_all(path):
                             # 1. 提取 pick_code
                             pick_code = strm_url.split('/play/')[-1].split('?')[0].strip()
                             
-                            # 2. 构造我们自己的 302 引导链接 (不要在这里去请求 115！)
+                            # 2. 动态获取客户端当前的访问地址 (完美解决内外网问题)
+                            # 如果客户端用公网域名访问，这里拿到的就是公网域名；如果是内网IP，就是内网IP
                             client_scheme = request.headers.get('X-Forwarded-Proto', request.scheme)
-                            host = request.headers.get('Host')
-                            # 加上 /video.mp4 后缀，满足部分挑剔的客户端(如安卓TV/苹果)必须看到扩展名才肯播放的毛病
-                            fake_direct_url = f"{client_scheme}://{host}/api/p115/play/{pick_code}/video.mp4"
+                            client_host = request.headers.get('Host') 
                             
-                            # 3. 完美伪装 MediaSource，逼迫客户端播放器亲自来请求
-                            source['Path'] = fake_direct_url
-                            source['DirectStreamUrl'] = fake_direct_url # 必须保留，很多客户端依赖这个
+                            # 3. 采纳你的建议：加上伪装的文件名参数，让客户端彻底相信这是一个视频文件
+                            # 使用 ?file=video.mp4 的方式，既能骗过客户端，又不会破坏路由
+                            proxy_play_url = f"{client_scheme}://{client_host}/api/p115/play/{pick_code}?file=video.mp4"
+                            
+                            # 4. 暴力覆盖，防止 Emby 瞎拼接 URL
+                            source['Path'] = proxy_play_url
+                            source['DirectStreamUrl'] = proxy_play_url
                             source['IsRemote'] = True
-                            
                             source['Protocol'] = 'Http'
                             source['SupportsDirectPlay'] = True
-                            source['SupportsDirectStream'] = True  # 允许直推，防止客户端直接报错
-                            source['SupportsTranscoding'] = False  # 绝对禁止服务端转码
+                            source['SupportsDirectStream'] = True
+                            source['SupportsTranscoding'] = False
                             
-                            # 移除码率限制，防止客户端因为觉得码率过高而向服务端请求转码
+                            # 极其关键：删掉 Emby 内部的转码和备用地址，逼它只能走我们的 proxy_play_url
+                            source.pop('TranscodingUrl', None) 
                             source.pop('Bitrate', None)
                             
                             modified = True
-                            logger.info(f"  🎬 [PlaybackInfo] 已下发 302 引导链接，等待播放器真实 UA 握手！")
+                            logger.info(f"  🎬 [PlaybackInfo] 已下发动态 302 引导链接 (Host: {client_host})，等待播放器握手！")
                             
                     if modified:
                         logger.info(f"  🎬 [PlaybackInfo] 识别为客户端，已将 115 真实 CDN 直链喂到嘴里！")
