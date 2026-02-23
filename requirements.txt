@@ -42,4 +42,4 @@ beautifulsoup4
 lxml
 
 # ---115 网盘支持 ---
-p115client
+p115client>=0.0.8.4.3.1
