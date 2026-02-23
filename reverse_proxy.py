@@ -781,6 +781,64 @@ def proxy_all(path):
     # --- 2. HTTP 代理逻辑 ---
     try:
         full_path = f'/{path}'
+        # ====================================================================
+        # ★★★ 终极拦截 G: PlaybackInfo 智能劫持 (完美兼容版) ★★★
+        # 针对 App/TV 强制直连 115，针对 Web 浏览器放行转码
+        # ====================================================================
+        if 'PlaybackInfo' in path:
+            try:
+                base_url, api_key = _get_real_emby_url_and_key()
+                target_url = f"{base_url}/{path.lstrip('/')}"
+                
+                # 获取客户端类型 (Emby 客户端通常会带这个 Header)
+                client_name = request.headers.get('X-Emby-Client', '').lower()
+                # 判断是否为网页端 (Emby Web)
+                is_web_client = 'web' in client_name
+                
+                forward_headers = {k: v for k, v in request.headers if k.lower() not in ['host', 'accept-encoding']}
+                forward_headers['Host'] = urlparse(base_url).netloc
+                forward_params = request.args.copy()
+                forward_params['api_key'] = api_key
+                
+                resp = requests.request(method=request.method, url=target_url, headers=forward_headers, params=forward_params, data=request.get_data(), timeout=10)
+                
+                if resp.status_code == 200 and 'application/json' in resp.headers.get('Content-Type', ''):
+                    data = resp.json()
+                    modified = False
+                    
+                    # 核心逻辑：只有当【不是】网页端时，才进行强力劫持
+                    if not is_web_client:
+                        for source in data.get('MediaSources', []):
+                            strm_url = source.get('Path', '')
+                            if isinstance(strm_url, str) and '/api/p115/play/' in strm_url:
+                                source['DirectStreamUrl'] = strm_url
+                                source['Path'] = strm_url
+                                # 强行删掉转码地址，逼迫 App/TV 走直连
+                                source.pop('TranscodingUrl', None)
+                                
+                                source['Protocol'] = 'Http'
+                                source['IsInfiniteStream'] = False
+                                source['RequiresOpening'] = False
+                                source['RequiresClosing'] = False
+                                source['SupportsDirectPlay'] = True
+                                source['SupportsDirectStream'] = True
+                                source['SupportsTranscoding'] = False
+                                modified = True
+                                
+                        if modified:
+                            logger.info(f"  🎬 [PlaybackInfo] 检测到客户端 [{client_name}]，已强制下发 115 直连！")
+                            return Response(json.dumps(data), status=200, mimetype='application/json')
+                    else:
+                        logger.info(f"  🌐 [PlaybackInfo] 检测到网页端 [{client_name}]，放行原生处理 (允许转码)")
+                        
+                # 如果是网页端，或者没修改成功，原样返回给客户端
+                excluded_resp_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
+                response_headers = [(name, value) for name, value in resp.headers.items() if name.lower() not in excluded_resp_headers]
+                return Response(resp.content, resp.status_code, response_headers)
+                
+            except Exception as e:
+                logger.error(f"  ❌ PlaybackInfo 劫持异常: {e}")
+                
         # --- 拦截 A: 虚拟项目海报图片 ---
         if path.startswith('emby/Items/') and '/Images/Primary' in path:
             item_id = path.split('/')[2]
