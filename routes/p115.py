@@ -194,7 +194,7 @@ def _get_cached_115_url(pick_code, user_agent, client_ip=None):
             logger.error(f"  ❌ 获取 115 直链 API 报错: {e}")
             return None
 
-@p115_bp.route('/play/<path:pick_code>', methods=['GET', 'HEAD', 'OPTIONS'])
+@p115_bp.route('/play/<pick_code>', methods=['GET', 'HEAD', 'OPTIONS'])
 def play_115_video(pick_code):
     if request.method == 'OPTIONS':
         from flask import Response
@@ -205,24 +205,22 @@ def play_115_video(pick_code):
         return resp
 
     try:
-        # 清理 pick_code，去掉我们伪装的 /video.mp4 或其他参数
-        actual_pick_code = pick_code.split('/')[0].strip()
-        
-        # 此时抓到的 User-Agent 是客户端底层播放器(ExoPlayer/AVPlayer)的真实 UA！
+        # 此时抓到的 User-Agent 才是底层播放器(ExoPlayer/AVPlayer)的真实 UA！
         player_ua = request.headers.get('User-Agent', 'Mozilla/5.0')
         client_ip = request.headers.get('X-Real-IP', request.remote_addr)
         
         # 用真实的播放器 UA 去换取 115 直链
-        real_url = _get_cached_115_url(actual_pick_code, player_ua, client_ip)
+        real_url = _get_cached_115_url(pick_code, player_ua, client_ip)
         
         if not real_url:
             return "Too Many Requests - 115 API Protection", 429
             
-        # 欺骗 1：解决外网 HTTPS 混合内容拦截 (移到这里处理)
+        # 解决外网 HTTPS 混合内容拦截
         client_scheme = request.headers.get('X-Forwarded-Proto', request.scheme)
         if client_scheme == 'https' and real_url.startswith('http://'):
             real_url = real_url.replace('http://', 'https://', 1)
             
+        # 302 重定向到真实的 115 CDN
         resp = redirect(real_url, code=302)
         resp.headers['Access-Control-Allow-Origin'] = '*'
         return resp
