@@ -733,6 +733,47 @@ def handle_get_latest_items(user_id, params):
 
 proxy_app = Flask(__name__)
 
+# --- 115 直链代理转发 (解决 Cookie 问题) ---
+@proxy_app.route('/proxy/115')
+def proxy_115_url():
+    """
+    代理 115 直链请求，自动添加 Cookie 解决 403 问题
+    """
+    from handler.p115_service import P115Service
+    from urllib.parse import unquote
+    target_url = request.args.get('url')
+    if not target_url:
+        return "Missing url parameter", 400
+    
+    # 解码 URL
+    target_url = unquote(target_url)
+    
+    try:
+        # 获取 115 Cookie
+        cookies = P115Service.get_cookies()
+        if not cookies:
+            return "115 Cookie not configured", 500
+            
+        # 构造请求头
+        headers = {
+            "User-Agent": request.headers.get('User-Agent', 'Mozilla/5.0'),
+            "Cookie": cookies,
+            "Referer": "https://115.com/"
+        }
+        
+        # 转发请求
+        resp = requests.get(target_url, headers=headers, stream=True, timeout=30)
+        
+        # 透传响应头
+        excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'keep-alive']
+        response_headers = [(name, value) for name, value in resp.raw.headers.items() if name.lower() not in excluded_headers]
+        
+        return Response(resp.iter_content(chunk_size=8192), resp.status_code, response_headers)
+        
+    except Exception as e:
+        logger.error(f"  ❌ 115 代理转发失败: {e}")
+        return f"Proxy error: {e}", 500
+
 @proxy_app.route('/', defaults={'path': ''})
 @proxy_app.route('/<path:path>', methods=['GET', 'POST', 'PUT', 'DELETE', 'HEAD', 'OPTIONS'])
 def proxy_all(path):
@@ -817,17 +858,25 @@ def proxy_all(path):
                             client_ip = request.headers.get('X-Real-IP', request.remote_addr)
                             real_115_cdn_url = _get_cached_115_url(pick_code, player_ua, client_ip)
                             
-                            # 3. 如果拿到了真实直链，直接塞给客户端！
+                            # 3. 如果拿到了真实直链，需要通过代理访问！
                             if real_115_cdn_url:
-                                source['DirectStreamUrl'] = real_115_cdn_url
-                                # 欺骗 1：解决外网 HTTPS 混合内容拦截
-                                client_scheme = request.headers.get('X-Forwarded-Proto', request.scheme)
-                                if client_scheme == 'https' and real_115_cdn_url.startswith('http://'):
-                                    real_115_cdn_url = real_115_cdn_url.replace('http://', 'https://', 1)
+                                logger.info(f"  🎬 获取到 115 直链: {real_115_cdn_url[:80]}...")
+                                
+                                # ★★★ 关键修复：115 直链需要 Cookie 才能播放 ★★★
+                                # 解决方案：让客户端通过 ETK 代理访问直链，而不是直接访问 115 CDN
+                                # 这样 ETK 可以在转发时自动添加 115 Cookie
+                                
+                                # 获取 ETK 服务器地址
+                                etk_base_url = config_manager.APP_CONFIG.get(constants.CONFIG_OPTION_ETK_SERVER_URL, "http://127.0.0.1:5257").rstrip('/')
+                                proxy_play_url = f"{etk_base_url}/proxy/115?url={requests.utils.quote(real_115_cdn_url)}"
+                                
+                                logger.info(f"  🔄 使用代理访问: {proxy_play_url[:60]}...")
+                                
+                                source['DirectStreamUrl'] = proxy_play_url
 
                                 # ★★★ 核心修复：防止客户端瞎拼接 URL ★★★
-                                source['Path'] = real_115_cdn_url
-                                source['IsRemote'] = True  # <--- 极其关键！告诉客户端这是外部独立直链
+                                source['Path'] = proxy_play_url
+                                source['IsRemote'] = True
                                 
                                 # 强行删掉 Emby 内部的流地址，逼迫客户端只能读取 Path 里的直链
                                 source.pop('DirectStreamUrl', None) 
@@ -835,13 +884,10 @@ def proxy_all(path):
                                 
                                 source['Protocol'] = 'Http'
                                 source['SupportsDirectPlay'] = True
-                                # 既然是外部直链，就不需要 Emby 的内部 DirectStream 了
                                 source['SupportsDirectStream'] = False 
                                 source['SupportsTranscoding'] = False
                                 
-                                # 欺骗 2：解决外网码率限制导致的强行转码
-                                # source['Bitrate'] = 1000000 
-                                
+                                logger.info(f"  ✅ PlaybackInfo 劫持完成，使用代理直链: {source['Path'][:60]}...")
                                 modified = True
                             
                     if modified:

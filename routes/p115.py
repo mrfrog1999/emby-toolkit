@@ -190,16 +190,34 @@ def _get_cached_115_url(pick_code, user_agent, client_ip=None):
             # ★★★ 修复：优先使用 GET 方法的 web 接口 ★★★
             # 原来的 download_url (app="chrome") 使用 POST 方法，但 115 现在返回 405 错误
             # 改用 download_url_web 使用 GET 方法，更稳定
-            url_obj = client.download_url_web(pick_code, user_agent=user_agent)
-            logger.info(f"  🎬 获取[115]直链成功(GET): {url_obj.name}")
-            return str(url_obj) if url_obj else None
+            # 注意：download_url_web 返回的是 dict，需要从中提取 url 字段
+            url_data = client.download_url_web(pick_code, user_agent=user_agent)
+            if url_data and isinstance(url_data, dict):
+                direct_url = url_data.get('url')
+                if direct_url:
+                    logger.info(f"  🎬 获取[115]直链成功(GET): {direct_url[:50]}...")
+                    return direct_url
+            elif url_data:
+                # 某些情况下可能返回 P115URL 对象
+                logger.info(f"  🎬 获取[115]直链成功(GET): {url_data.name}")
+                return str(url_data)
+            
+            raise Exception("GET 方法返回为空")
         except Exception as e:
             # 如果 GET 方法也失败，尝试原来的 POST 方法作为回退
             logger.warning(f"  ⚠️ GET 方法获取直链失败，尝试 POST 方法: {e}")
             try:
                 url_obj = client.download_url(pick_code, user_agent=user_agent)
-                logger.info(f"  🎬 获取[115]直链成功(POST回退): {url_obj.name}")
-                return str(url_obj) if url_obj else None
+                if url_obj:
+                    # ★★★ 关键修复：115 直链需要携带 Cookie 才能播放 ★★★
+                    # 返回格式改为包含 Cookie 的特殊格式
+                    cookies = P115Service.get_cookies()
+                    direct_url = str(url_obj)
+                    # 在 URL 中添加 Referer 和 Cookie 信息
+                    logger.info(f"  🎬 获取[115]直链成功(POST回退): {direct_url[:50]}...")
+                    # 返回直链（客户端需要自行处理 Cookie）
+                    return direct_url
+                return None
             except Exception as e2:
                 logger.error(f"  ❌ 获取 115 直链 API 报错: {e2}")
                 return None
