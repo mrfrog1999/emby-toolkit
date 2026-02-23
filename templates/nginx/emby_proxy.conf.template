@@ -82,18 +82,6 @@ server {
         proxy_pass http://emby_server;
     }
 
-    # ★★★ 规则 6：【新增】拦截视频播放和嗅探请求，交给 Python 劫持 302 ★★★
-    location ~* ^/(emby/)?(videos/.*/(stream|original)|Items/.*/PlaybackInfo) {
-        proxy_pass http://virtual_library_proxy;
-        
-        # 必须透传客户端真实 IP 和 UA，否则 115 会报 403
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header User-Agent $http_user_agent;
-    }
-
     # 兜底规则：转发所有其他请求到真实 Emby
     location / {
         proxy_pass http://emby_server;
