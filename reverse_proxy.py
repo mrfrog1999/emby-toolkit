@@ -840,9 +840,10 @@ def proxy_all(path):
         # ★★★ 终极拦截 A+：全盘接管视频流 302 直链解析 (双重保险) ★★★
         # 防止某些顽固客户端无视 PlaybackInfo 强行请求 original.mkv
         # ====================================================================
-        if '/videos/' in full_path and re.search(r'/(stream|original)', full_path, re.IGNORECASE):
+        if re.search(r'/(videos|Audio)/', full_path, re.IGNORECASE) and re.search(r'/(stream|original|master|main|hls)', full_path, re.IGNORECASE):
             try:
-                item_id_match = re.search(r'/videos/([^/]+)/', full_path)
+                # 兼容 /videos/xxxx/ 和 /Audio/xxxx/
+                item_id_match = re.search(r'/(?:videos|Audio)/([^/]+)/', full_path, re.IGNORECASE)
                 if item_id_match:
                     item_id = item_id_match.group(1)
                     base_url, api_key = _get_real_emby_url_and_key()

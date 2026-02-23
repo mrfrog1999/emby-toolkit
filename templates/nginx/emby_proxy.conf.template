@@ -82,9 +82,18 @@ server {
         proxy_pass http://emby_server;
     }
 
-    # ★★★ 规则 1.5：拦截视频流请求 (双重保险) ★★★
-    # 匹配 /emby/videos/xxxx/original.mkv 或 /videos/xxxx/stream.mp4
-    location ~* /videos/([^/]+)/(stream|original) {
+    # 拦截 PlaybackInfo (至关重要！让 Python 的劫持逻辑生效) ★★★
+    location ~* /Items/([^/]+)/PlaybackInfo {
+        proxy_pass http://virtual_library_proxy;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # ★★★ 修改：扩大视频流请求的拦截范围 (涵盖客户端的 HLS 和音频流) ★★★
+    # 匹配 stream, original, master.m3u8, main.m3u8, hls 等
+    location ~* /(videos|Audio)/([^/]+)/(stream|original|master|main|hls) {
         proxy_pass http://virtual_library_proxy;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
