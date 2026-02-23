@@ -213,7 +213,9 @@ def play_115_video(pick_code):
         if not real_url:
             return "Too Many Requests - 115 API Protection", 429
             
-        # 撤销强制 HTTPS，保持 115 原生链接 (115 CDN 通常不支持 HTTPS)
+        if real_url.startswith('http://'):
+            real_url = real_url.replace('http://', 'https://', 1)
+            
         resp = redirect(real_url, code=302)
         resp.headers['Access-Control-Allow-Origin'] = '*'
         return resp

@@ -790,6 +790,7 @@ def proxy_all(path):
                 base_url, api_key = _get_real_emby_url_and_key()
                 target_url = f"{base_url}/{path.lstrip('/')}"
                 
+                # --- 核心修复：多维度精准识别网页浏览器 ---
                 client_name = request.headers.get('X-Emby-Client', '').lower()
                 auth_header = request.headers.get('X-Emby-Authorization', '').lower()
                 user_agent = request.headers.get('User-Agent', '').lower()
@@ -798,6 +799,7 @@ def proxy_all(path):
                 if 'web' in client_name or 'client="emby web"' in auth_header:
                     is_web_client = True
                 elif not client_name and not auth_header:
+                    # 如果没有 Emby 特有请求头，但 UA 是标准浏览器，且不是 Infuse 等播放器
                     if 'mozilla' in user_agent and 'applewebkit' in user_agent and 'infuse' not in user_agent:
                         is_web_client = True
 
@@ -816,19 +818,8 @@ def proxy_all(path):
                         for source in data.get('MediaSources', []):
                             strm_url = source.get('Path', '')
                             if isinstance(strm_url, str) and '/api/p115/play/' in strm_url:
-                                # ★★★ 核心修复：动态重写 URL 适配内外网 ★★★
-                                # 1. 提取 pick_code
-                                pick_code = strm_url.split('/play/')[-1].split('?')[0].strip()
-                                
-                                # 2. 获取客户端当前访问的真实协议 (http/https) 和 域名/IP
-                                client_scheme = request.headers.get('X-Forwarded-Proto', request.scheme)
-                                client_host = request.headers.get('Host', request.host)
-                                
-                                # 3. 动态拼接出适合当前客户端网络环境的代理地址
-                                dynamic_url = f"{client_scheme}://{client_host}/api/p115/play/{pick_code}"
-                                
-                                source['DirectStreamUrl'] = dynamic_url
-                                source['Path'] = dynamic_url
+                                source['DirectStreamUrl'] = strm_url
+                                source['Path'] = strm_url
                                 source.pop('TranscodingUrl', None) # 逼迫客户端直连
                                 source['Protocol'] = 'Http'
                                 source['SupportsDirectPlay'] = True
@@ -837,7 +828,7 @@ def proxy_all(path):
                                 modified = True
                                 
                         if modified:
-                            logger.info(f"  🎬 [PlaybackInfo] 识别为客户端，已动态下发直连地址: {dynamic_url}")
+                            logger.info(f"  🎬 [PlaybackInfo] 识别为客户端，强制下发 115 直连！")
                             return Response(json.dumps(data), status=200, mimetype='application/json')
                     else:
                         logger.info(f"  🌐 [PlaybackInfo] 识别为网页浏览器，放行原生处理 (允许转码)")
@@ -878,6 +869,10 @@ def proxy_all(path):
                                 real_url = _get_cached_115_url(pick_code, player_ua, client_ip)
                                 
                                 if real_url:
+                                    # 同样强制升级为 HTTPS
+                                    if real_url.startswith('http://'):
+                                        real_url = real_url.replace('http://', 'https://', 1)
+                                        
                                     logger.info(f"  🎬 [视频流拦截] 成功拦截客户端请求，下发 115 直链！")
                                     from flask import redirect
                                     return redirect(real_url, code=302)
