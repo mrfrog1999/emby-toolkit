@@ -2,6 +2,7 @@
 import logging
 from flask import redirect
 import threading
+from flask import Response
 from datetime import datetime, timedelta
 import json
 import os
@@ -193,22 +194,33 @@ def _get_cached_115_url(pick_code, user_agent, client_ip=None):
             logger.error(f"  ❌ 获取 115 直链 API 报错: {e}")
             return None
 
-@p115_bp.route('/play/<pick_code>', methods=['GET', 'HEAD']) # 允许 HEAD 请求，加速客户端嗅探
+@p115_bp.route('/play/<pick_code>', methods=['GET', 'HEAD', 'OPTIONS'])
 def play_115_video(pick_code):
     """
-    终极极速 302 直链解析服务 (带内存缓存版)
+    终极极速 302 直链解析服务 (带跨域与预检支持)
     """
+    # 1. 处理播放器的 CORS 预检请求 (解决客户端 500 错误的核心)
+    if request.method == 'OPTIONS':
+        resp = Response()
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        resp.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
+        resp.headers['Access-Control-Allow-Headers'] = '*'
+        return resp
+
     try:
         player_ua = request.headers.get('User-Agent', 'Mozilla/5.0')
         client_ip = request.headers.get('X-Real-IP', request.remote_addr)
+        
         # 尝试从缓存获取
         real_url = _get_cached_115_url(pick_code, player_ua, client_ip)
         
         if not real_url:
-            # 如果解析太快被拦截了，给播放器返回 429 告知稍后再试
             return "Too Many Requests - 115 API Protection", 429
             
-        return redirect(real_url, code=302)
+        # 2. 返回 302 重定向，并附带跨域头
+        resp = redirect(real_url, code=302)
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        return resp
         
     except Exception as e:
         logger.error(f"  ❌ 直链解析发生异常: {e}")

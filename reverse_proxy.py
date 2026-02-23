@@ -783,8 +783,7 @@ def proxy_all(path):
         full_path = f'/{path}'
 
         # ====================================================================
-        # ★★★ 终极拦截 G: PlaybackInfo 劫持 (核心！彻底切断 Emby 中转) ★★★
-        # 在客户端起播前，篡改 Emby 返回的播放信息，强制客户端直连 115 接口
+        # ★★★ 终极拦截 G: PlaybackInfo 劫持 (温和版) ★★★
         # ====================================================================
         if 'PlaybackInfo' in path:
             try:
@@ -796,7 +795,6 @@ def proxy_all(path):
                 forward_params = request.args.copy()
                 forward_params['api_key'] = api_key
                 
-                # 先让 Emby 原生处理，获取真实的媒体信息（包含字幕、音轨等）
                 resp = requests.request(method=request.method, url=target_url, headers=forward_headers, params=forward_params, data=request.get_data(), timeout=10)
                 
                 if resp.status_code == 200 and 'application/json' in resp.headers.get('Content-Type', ''):
@@ -805,74 +803,26 @@ def proxy_all(path):
                     
                     for source in data.get('MediaSources', []):
                         strm_url = source.get('Path', '')
-                        # 如果检测到这是我们的 115 strm 文件
                         if isinstance(strm_url, str) and '/api/p115/play/' in strm_url:
-                            # 强制重写播放地址，让客户端直接请求我们的直链解析接口
+                            # 仅优化直连地址，不删除转码地址！
                             source['DirectStreamUrl'] = strm_url
                             source['Path'] = strm_url
-                            # 移除转码地址，防止客户端降级走服务端转码
-                            source.pop('TranscodingUrl', None)
-                            
-                            # 伪装成完美的直连 HTTP 流，骗过所有严格的客户端
                             source['Protocol'] = 'Http'
-                            source['IsInfiniteStream'] = False
-                            source['RequiresOpening'] = False
-                            source['RequiresClosing'] = False
                             source['SupportsDirectPlay'] = True
                             source['SupportsDirectStream'] = True
-                            source['SupportsTranscoding'] = False
+                            # 删掉 source['SupportsTranscoding'] = False 这行！让浏览器可以转码
                             modified = True
                             
                     if modified:
-                        logger.info(f"  🎬 [PlaybackInfo] 成功劫持，已强制客户端直连 115 接口！")
+                        logger.info(f"  🎬 [PlaybackInfo] 已优化 strm 播放信息")
                         return Response(json.dumps(data), status=200, mimetype='application/json')
                         
-                # 如果没修改或出错，原样返回
                 excluded_resp_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
                 response_headers = [(name, value) for name, value in resp.headers.items() if name.lower() not in excluded_resp_headers]
                 return Response(resp.content, resp.status_code, response_headers)
                 
             except Exception as e:
                 logger.error(f"  ❌ PlaybackInfo 劫持异常: {e}")
-                # 发生异常时，走底部的兜底逻辑
-
-        # ====================================================================
-        # ★★★ 终极拦截 A+：全盘接管视频流 302 直链解析 (双重保险) ★★★
-        # 防止某些顽固客户端无视 PlaybackInfo 强行请求 original.mkv
-        # ====================================================================
-        if re.search(r'/(videos|Audio)/', full_path, re.IGNORECASE) and re.search(r'/(stream|original|master|main|hls)', full_path, re.IGNORECASE):
-            try:
-                # 兼容 /videos/xxxx/ 和 /Audio/xxxx/
-                item_id_match = re.search(r'/(?:videos|Audio)/([^/]+)/', full_path, re.IGNORECASE)
-                if item_id_match:
-                    item_id = item_id_match.group(1)
-                    base_url, api_key = _get_real_emby_url_and_key()
-                    user_id = request.args.get('UserId') or request.args.get('api_key') or "admin"
-                    
-                    # 放弃直接查 Path (普通用户无权限)，改查 PlaybackInfo 获取 strm 内容
-                    pb_url = f"{base_url}/emby/Items/{item_id}/PlaybackInfo"
-                    resp = requests.get(pb_url, params={'api_key': api_key, 'UserId': user_id}, timeout=3)
-                    
-                    if resp.status_code == 200:
-                        pb_data = resp.json()
-                        sources = pb_data.get('MediaSources', [])
-                        if sources:
-                            strm_url = sources[0].get('Path', '')
-                            
-                            if isinstance(strm_url, str) and '/api/p115/play/' in strm_url:
-                                pick_code = strm_url.split('/play/')[-1].split('?')[0].strip()
-                                
-                                player_ua = request.headers.get('User-Agent', 'Mozilla/5.0')
-                                client_ip = request.headers.get('X-Real-IP', request.remote_addr)
-                                
-                                real_url = _get_cached_115_url(pick_code, player_ua, client_ip)
-                                
-                                if real_url:
-                                    logger.info(f"  🎬 [反代劫持] 成功拦截 Emby 流请求，下发 115 CDN 直链！")
-                                    from flask import redirect
-                                    return redirect(real_url, code=302)
-            except Exception as e:
-                logger.error(f"  ❌ 反代拦截解析直链出错，回退原生处理: {e}")
 
         # --- 拦截 A: 虚拟项目海报图片 ---
         if path.startswith('emby/Items/') and '/Images/Primary' in path:
