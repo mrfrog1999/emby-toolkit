@@ -58,6 +58,7 @@ CONFIG_OPTION_LOCAL_STRM_ROOT = "local_strm_root"              # 本地生成.st
 CONFIG_OPTION_ETK_SERVER_URL = "etk_server_url"                # ETK服务器地址 (用于strm文件内)
 CONFIG_OPTION_115_ENABLE_SYNC_DELETE = "p115_enable_sync_delete" # 是否联动删除网盘文件
 CONFIG_OPTION_115_DOWNLOAD_SUBS = "p115_download_subs"         # 是否下载字幕文件
+CONFIG_OPTION_115_LOCAL_CLEANUP = "p115_local_cleanup"         # 是否启用本地清理功能
 
 # ==============================================================================
 # ✨ 通知服务 (Notification Services)

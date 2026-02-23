@@ -1282,7 +1282,9 @@ def task_full_sync_strm_and_subs(processor=None):
     """
     config = get_config()
     download_subs = config.get(constants.CONFIG_OPTION_115_DOWNLOAD_SUBS, True)
+    enable_cleanup = config.get(constants.CONFIG_OPTION_115_LOCAL_CLEANUP, False)
     start_msg = "=== 🚀 开始全量生成 STRM 与 同步字幕 ===" if download_subs else "=== 🚀 开始全量生成 STRM (已跳过字幕) ==="
+    if enable_cleanup: start_msg += " [已开启本地清理]"
     logger.info(start_msg)
     
     try:
@@ -1354,6 +1356,8 @@ def task_full_sync_strm_and_subs(processor=None):
                 logger.warning(f"获取 CID:{cid} 路径层级失败: {e}")
                 cid_to_rel_path[cid] = r.get('dir_name', '未识别')
 
+    valid_local_files = set() # 本地已存在的 STRM 和字幕文件绝对路径集合（仅当 enable_cleanup=True 时使用）
+    successful_cids = set() # 记录成功处理过的 CID，最后用于清理本地多余文件
     # ==========================================
     # ★ 内部处理逻辑：接收 base_cid 来确定分类前缀
     # ==========================================
@@ -1389,6 +1393,7 @@ def task_full_sync_strm_and_subs(processor=None):
                 with open(strm_path, 'w', encoding='utf-8') as f: f.write(content)
                 logger.debug(f"生成 STRM: {strm_name}")
             files_generated += 1
+            valid_local_files.add(os.path.abspath(strm_path)) # 记录有效文件绝对路径
                 
         elif ext in known_sub_exts:
             # 检查开关
@@ -1409,6 +1414,7 @@ def task_full_sync_strm_and_subs(processor=None):
                                 for chunk in resp.iter_content(8192): f.write(chunk)
                             logger.info(f"下载字幕: {name}")
                         files_generated += 1
+                        valid_local_files.add(os.path.abspath(sub_path)) # 记录有效文件绝对路径
                     except Exception as e:
                         logger.error(f"下载字幕失败 [{name}]: {e}")
 
@@ -1500,6 +1506,47 @@ def task_full_sync_strm_and_subs(processor=None):
                 logger.error(f"标准扫描异常 CID:{base_cid}: {e}")
                 
         logger.info(f"  ✅ [{category_rel_path}] 同步完成，处理文件: {files_generated}")
+        if files_generated > 0:
+            successful_cids.add(base_cid)
+        # ==========================================
+    # ★ 新增：安全的本地清理逻辑 (放在 for 循环外面，函数的末尾)
+    # ==========================================
+    if enable_cleanup:
+        update_progress(95, "  🧹 正在执行本地多余文件清理...")
+        cleaned_files = 0
+        cleaned_dirs = 0
+        
+        for base_cid in successful_cids:
+            category_rel_path = cid_to_rel_path.get(base_cid)
+            target_local_dir = os.path.join(local_root, category_rel_path)
+            
+            if not os.path.exists(target_local_dir): continue
+            
+            # 1. 清理多余的文件 (只碰 strm 和 字幕)
+            for root_dir, dirs, files in os.walk(target_local_dir):
+                for file in files:
+                    ext = file.split('.')[-1].lower()
+                    if ext in known_sub_exts or ext == 'strm':
+                        file_path = os.path.abspath(os.path.join(root_dir, file))
+                        if file_path not in valid_local_files:
+                            try:
+                                os.remove(file_path)
+                                cleaned_files += 1
+                                logger.debug(f"  🗑️ [清理] 删除失效文件: {file}")
+                            except Exception as e:
+                                logger.warning(f"  ⚠️ 删除文件失败 {file}: {e}")
+            
+            # 2. 清理空文件夹 (自底向上)
+            for root_dir, dirs, files in os.walk(target_local_dir, topdown=False):
+                for d in dirs:
+                    dir_path = os.path.join(root_dir, d)
+                    try:
+                        if not os.listdir(dir_path): # 如果文件夹为空
+                            os.rmdir(dir_path)
+                            cleaned_dirs += 1
+                    except: pass
+                    
+        logger.info(f"  🧹 清理完成: 删除了 {cleaned_files} 个失效文件, {cleaned_dirs} 个空目录。")
 
     end_msg = "=== 全量 STRM 与字幕同步结束 ===" if download_subs else "=== 全量 STRM 生成结束 ==="
     update_progress(100, end_msg)

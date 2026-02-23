@@ -383,6 +383,15 @@
                             <n-text depth="3" style="font-size:0.8em;">开启后，整理或全量生成 STRM 时会自动将 115 上的字幕文件真实下载到本地同级目录。</n-text>
                         </template>
                     </n-form-item>
+                    <n-form-item label="全量同步时清理本地" path="p115_local_cleanup">
+                        <n-switch v-model:value="configModel.p115_local_cleanup">
+                            <template #checked>清理失效文件</template>
+                            <template #unchecked>保留本地文件</template>
+                        </n-switch>
+                        <template #feedback>
+                            <n-text depth="3" style="font-size:0.8em;">开启后，全量生成 STRM 时，会自动删除本地存在但网盘已不存在的 .strm 和字幕文件。</n-text>
+                        </template>
+                    </n-form-item>
                     <n-form-item label="联动删除网盘文件" path="p115_enable_sync_delete">
                         <n-switch v-model:value="configModel.p115_enable_sync_delete">
                             <template #checked>销毁网盘源文件</template>
