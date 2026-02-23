@@ -837,8 +837,7 @@ def proxy_all(path):
                 # 发生异常时，走底部的兜底逻辑
 
         # ====================================================================
-        # ★★★ 终极拦截 A+：全盘接管视频流 302 直链解析 (双重保险) ★★★
-        # 防止某些顽固客户端无视 PlaybackInfo 强行请求 original.mkv
+        # ★★★ 终极拦截 A+：全盘接管视频流 302 直链解析 (解决 115 UA 盗链拦截) ★★★
         # ====================================================================
         if '/videos/' in full_path and re.search(r'/(stream|original)', full_path, re.IGNORECASE):
             try:
@@ -848,7 +847,7 @@ def proxy_all(path):
                     base_url, api_key = _get_real_emby_url_and_key()
                     user_id = request.args.get('UserId') or request.args.get('api_key') or "admin"
                     
-                    # 放弃直接查 Path (普通用户无权限)，改查 PlaybackInfo 获取 strm 内容
+                    # 1. 通过 PlaybackInfo 获取真实的 strm 路径
                     pb_url = f"{base_url}/emby/Items/{item_id}/PlaybackInfo"
                     resp = requests.get(pb_url, params={'api_key': api_key, 'UserId': user_id}, timeout=3)
                     
@@ -858,20 +857,45 @@ def proxy_all(path):
                         if sources:
                             strm_url = sources[0].get('Path', '')
                             
+                            # 2. 确认是我们的 115 代理流
                             if isinstance(strm_url, str) and '/api/p115/play/' in strm_url:
                                 pick_code = strm_url.split('/play/')[-1].split('?')[0].strip()
                                 
-                                player_ua = request.headers.get('User-Agent', 'Mozilla/5.0')
+                                raw_ua = request.headers.get('User-Agent', 'Mozilla/5.0')
+                                
+                                # ---------------------------------------------------------
+                                # 🚀 核心修复：解决第三方播放器 UA 不一致导致的 115 403 盗链错误
+                                # ---------------------------------------------------------
+                                player_ua = raw_ua
+                                raw_ua_lower = raw_ua.lower()
+                                # 如果是苹果系的播放器 (Infuse, VidHub, Fileball, 官方 iOS 客户端)
+                                if any(x in raw_ua_lower for x in ['infuse', 'vidhub', 'fileball', 'emby/ios', 'cfnetwork', 'applecoremedia']):
+                                    # 强制伪装成苹果底层播放器的 UA 去向 115 申请直链
+                                    player_ua = "AppleCoreMedia/1.0.0.19R360 (iPad; U; CPU OS 15_5 like Mac OS X; zh_cn)"
+                                
                                 client_ip = request.headers.get('X-Real-IP', request.remote_addr)
                                 
+                                # 3. 获取直链
                                 real_url = _get_cached_115_url(pick_code, player_ua, client_ip)
                                 
                                 if real_url:
-                                    logger.info(f"  🎬 [反代劫持] 成功拦截 Emby 流请求，下发 115 CDN 直链！")
-                                    from flask import redirect
-                                    return redirect(real_url, code=302)
+                                    # 强制转换为 HTTPS (防止 iOS ATS 安全策略拦截 HTTP 导致播放失败)
+                                    if real_url.startswith('http://'):
+                                        real_url = real_url.replace('http://', 'https://', 1)
+                                        
+                                    logger.info(f"  🎬 [反代劫持] 成功下发 115 直链! 伪装UA: {player_ua[:20]}...")
+                                    
+                                    # 4. 构造完美的 302 响应
+                                    response = Response(status=302)
+                                    response.headers['Location'] = real_url
+                                    # 加上跨域头（虽然 115 CDN 不认，但能安抚部分中间件）
+                                    response.headers['Access-Control-Allow-Origin'] = '*'
+                                    response.headers['Access-Control-Allow-Headers'] = '*'
+                                    response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
+                                    return response
             except Exception as e:
                 logger.error(f"  ❌ 反代拦截解析直链出错，回退原生处理: {e}")
+
 
         # --- 拦截 A: 虚拟项目海报图片 ---
         if path.startswith('emby/Items/') and '/Images/Primary' in path:
