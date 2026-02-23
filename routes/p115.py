@@ -196,11 +196,8 @@ def _get_cached_115_url(pick_code, user_agent, client_ip=None):
 
 @p115_bp.route('/play/<pick_code>', methods=['GET', 'HEAD', 'OPTIONS'])
 def play_115_video(pick_code):
-    """
-    终极极速 302 直链解析服务 (带跨域与预检支持)
-    """
-    # 1. 处理播放器的 CORS 预检请求 (解决客户端 500 错误的核心)
     if request.method == 'OPTIONS':
+        from flask import Response
         resp = Response()
         resp.headers['Access-Control-Allow-Origin'] = '*'
         resp.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
@@ -211,13 +208,14 @@ def play_115_video(pick_code):
         player_ua = request.headers.get('User-Agent', 'Mozilla/5.0')
         client_ip = request.headers.get('X-Real-IP', request.remote_addr)
         
-        # 尝试从缓存获取
         real_url = _get_cached_115_url(pick_code, player_ua, client_ip)
         
         if not real_url:
             return "Too Many Requests - 115 API Protection", 429
             
-        # 2. 返回 302 重定向，并附带跨域头
+        if real_url.startswith('http://'):
+            real_url = real_url.replace('http://', 'https://', 1)
+            
         resp = redirect(real_url, code=302)
         resp.headers['Access-Control-Allow-Origin'] = '*'
         return resp

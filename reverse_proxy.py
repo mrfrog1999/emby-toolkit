@@ -790,11 +790,19 @@ def proxy_all(path):
                 base_url, api_key = _get_real_emby_url_and_key()
                 target_url = f"{base_url}/{path.lstrip('/')}"
                 
-                # 获取客户端类型 (Emby 客户端通常会带这个 Header)
+                # --- 核心修复：多维度精准识别网页浏览器 ---
                 client_name = request.headers.get('X-Emby-Client', '').lower()
-                # 判断是否为网页端 (Emby Web)
-                is_web_client = 'web' in client_name
+                auth_header = request.headers.get('X-Emby-Authorization', '').lower()
+                user_agent = request.headers.get('User-Agent', '').lower()
                 
+                is_web_client = False
+                if 'web' in client_name or 'client="emby web"' in auth_header:
+                    is_web_client = True
+                elif not client_name and not auth_header:
+                    # 如果没有 Emby 特有请求头，但 UA 是标准浏览器，且不是 Infuse 等播放器
+                    if 'mozilla' in user_agent and 'applewebkit' in user_agent and 'infuse' not in user_agent:
+                        is_web_client = True
+
                 forward_headers = {k: v for k, v in request.headers if k.lower() not in ['host', 'accept-encoding']}
                 forward_headers['Host'] = urlparse(base_url).netloc
                 forward_params = request.args.copy()
@@ -806,39 +814,71 @@ def proxy_all(path):
                     data = resp.json()
                     modified = False
                     
-                    # 核心逻辑：只有当【不是】网页端时，才进行强力劫持
                     if not is_web_client:
                         for source in data.get('MediaSources', []):
                             strm_url = source.get('Path', '')
                             if isinstance(strm_url, str) and '/api/p115/play/' in strm_url:
                                 source['DirectStreamUrl'] = strm_url
                                 source['Path'] = strm_url
-                                # 强行删掉转码地址，逼迫 App/TV 走直连
-                                source.pop('TranscodingUrl', None)
-                                
+                                source.pop('TranscodingUrl', None) # 逼迫客户端直连
                                 source['Protocol'] = 'Http'
-                                source['IsInfiniteStream'] = False
-                                source['RequiresOpening'] = False
-                                source['RequiresClosing'] = False
                                 source['SupportsDirectPlay'] = True
                                 source['SupportsDirectStream'] = True
                                 source['SupportsTranscoding'] = False
                                 modified = True
                                 
                         if modified:
-                            logger.info(f"  🎬 [PlaybackInfo] 检测到客户端 [{client_name}]，已强制下发 115 直连！")
+                            logger.info(f"  🎬 [PlaybackInfo] 识别为客户端，强制下发 115 直连！")
                             return Response(json.dumps(data), status=200, mimetype='application/json')
                     else:
-                        logger.info(f"  🌐 [PlaybackInfo] 检测到网页端 [{client_name}]，放行原生处理 (允许转码)")
+                        logger.info(f"  🌐 [PlaybackInfo] 识别为网页浏览器，放行原生处理 (允许转码)")
                         
-                # 如果是网页端，或者没修改成功，原样返回给客户端
                 excluded_resp_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
                 response_headers = [(name, value) for name, value in resp.headers.items() if name.lower() not in excluded_resp_headers]
                 return Response(resp.content, resp.status_code, response_headers)
                 
             except Exception as e:
                 logger.error(f"  ❌ PlaybackInfo 劫持异常: {e}")
-                
+
+        # ====================================================================
+        # ★★★ 终极拦截 A+：全盘接管视频流 302 直链解析 (双重保险) ★★★
+        # ====================================================================
+        if '/videos/' in full_path and re.search(r'/(stream|original)', full_path, re.IGNORECASE):
+            try:
+                item_id_match = re.search(r'/videos/([^/]+)/', full_path)
+                if item_id_match:
+                    item_id = item_id_match.group(1)
+                    base_url, api_key = _get_real_emby_url_and_key()
+                    user_id = request.args.get('UserId') or request.args.get('api_key') or "admin"
+                    
+                    pb_url = f"{base_url}/emby/Items/{item_id}/PlaybackInfo"
+                    resp = requests.get(pb_url, params={'api_key': api_key, 'UserId': user_id}, timeout=3)
+                    
+                    if resp.status_code == 200:
+                        pb_data = resp.json()
+                        sources = pb_data.get('MediaSources', [])
+                        if sources:
+                            strm_url = sources[0].get('Path', '')
+                            
+                            if isinstance(strm_url, str) and '/api/p115/play/' in strm_url:
+                                pick_code = strm_url.split('/play/')[-1].split('?')[0].strip()
+                                
+                                player_ua = request.headers.get('User-Agent', 'Mozilla/5.0')
+                                client_ip = request.headers.get('X-Real-IP', request.remote_addr)
+                                
+                                real_url = _get_cached_115_url(pick_code, player_ua, client_ip)
+                                
+                                if real_url:
+                                    # 同样强制升级为 HTTPS
+                                    if real_url.startswith('http://'):
+                                        real_url = real_url.replace('http://', 'https://', 1)
+                                        
+                                    logger.info(f"  🎬 [视频流拦截] 成功拦截客户端请求，下发 115 直链！")
+                                    from flask import redirect
+                                    return redirect(real_url, code=302)
+            except Exception as e:
+                logger.error(f"  ❌ 视频流拦截异常: {e}")
+
         # --- 拦截 A: 虚拟项目海报图片 ---
         if path.startswith('emby/Items/') and '/Images/Primary' in path:
             item_id = path.split('/')[2]
