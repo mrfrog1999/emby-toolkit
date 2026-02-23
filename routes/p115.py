@@ -213,10 +213,6 @@ def play_115_video(pick_code):
         if not real_url:
             return "Too Many Requests - 115 API Protection", 429
             
-        # ★★★ 核心修复：强制升级为 HTTPS，防止 TV/手机端因安全策略拦截 HTTP 导致 500 错误 ★★★
-        if real_url.startswith('http://'):
-            real_url = real_url.replace('http://', 'https://', 1)
-            
         resp = redirect(real_url, code=302)
         resp.headers['Access-Control-Allow-Origin'] = '*'
         return resp
