@@ -733,20 +733,40 @@ def handle_get_latest_items(user_id, params):
 
 proxy_app = Flask(__name__)
 
-# --- 115 直链代理转发 (解决 Cookie 问题) ---
-@proxy_app.route('/proxy/115')
-def proxy_115_url():
+# --- 115 直链缓存 (解决 Cookie 问题) ---
+import hashlib
+import threading
+
+class P115UrlCache:
+    """115 直链缓存，Key 是 pick_code，Value 是带 Cookie 的直链"""
+    _cache = {}
+    _lock = threading.Lock()
+    _cookies_cache = None
+    
+    @classmethod
+    def get_cached_url(cls, pick_code):
+        """获取缓存的直链"""
+        with cls._lock:
+            return cls._cache.get(pick_code)
+    
+    @classmethod
+    def set_cached_url(cls, pick_code, direct_url):
+        """缓存直链（带 Cookie）"""
+        with cls._lock:
+            cls._cache[pick_code] = direct_url
+
+# --- 115 直链代理转发 (使用缓存) ---
+@proxy_app.route('/proxy/115/<pick_code>')
+def proxy_115_url(pick_code):
     """
-    代理 115 直链请求，自动添加 Cookie 解决 403 问题
+    代理 115 直链请求，使用缓存的直链 + Cookie
     """
     from handler.p115_service import P115Service
-    from urllib.parse import unquote
-    target_url = request.args.get('url')
-    if not target_url:
-        return "Missing url parameter", 400
     
-    # 解码 URL
-    target_url = unquote(target_url)
+    # 从缓存获取直链
+    direct_url = P115UrlCache.get_cached_url(pick_code)
+    if not direct_url:
+        return "URL not in cache, please request PlaybackInfo first", 404
     
     try:
         # 获取 115 Cookie
@@ -762,7 +782,7 @@ def proxy_115_url():
         }
         
         # 转发请求
-        resp = requests.get(target_url, headers=headers, stream=True, timeout=30)
+        resp = requests.get(direct_url, headers=headers, stream=True, timeout=30)
         
         # 透传响应头
         excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'keep-alive']
@@ -858,19 +878,22 @@ def proxy_all(path):
                             client_ip = request.headers.get('X-Real-IP', request.remote_addr)
                             real_115_cdn_url = _get_cached_115_url(pick_code, player_ua, client_ip)
                             
-                            # 3. 如果拿到了真实直链，需要通过代理访问！
+                            # 3. 如果拿到了真实直链，缓存直链并通过代理访问！
                             if real_115_cdn_url:
                                 logger.info(f"  🎬 获取到 115 直链: {real_115_cdn_url[:80]}...")
                                 
                                 # ★★★ 关键修复：115 直链需要 Cookie 才能播放 ★★★
-                                # 解决方案：让客户端通过 ETK 代理访问直链，而不是直接访问 115 CDN
+                                # 解决方案：缓存直链，让客户端通过 ETK 代理访问（pick_code 作为 Key）
                                 # 这样 ETK 可以在转发时自动添加 115 Cookie
+                                
+                                # 缓存直链（使用 pick_code 作为 Key）
+                                P115UrlCache.set_cached_url(pick_code, real_115_cdn_url)
                                 
                                 # 获取 ETK 服务器地址
                                 etk_base_url = config_manager.APP_CONFIG.get(constants.CONFIG_OPTION_ETK_SERVER_URL, "http://127.0.0.1:5257").rstrip('/')
-                                proxy_play_url = f"{etk_base_url}/proxy/115?url={requests.utils.quote(real_115_cdn_url)}"
+                                proxy_play_url = f"{etk_base_url}/proxy/115/{pick_code}"
                                 
-                                logger.info(f"  🔄 使用代理访问: {proxy_play_url[:60]}...")
+                                logger.info(f"  🔄 使用代理访问: {proxy_play_url}")
                                 
                                 source['DirectStreamUrl'] = proxy_play_url
 
@@ -887,7 +910,7 @@ def proxy_all(path):
                                 source['SupportsDirectStream'] = False 
                                 source['SupportsTranscoding'] = False
                                 
-                                logger.info(f"  ✅ PlaybackInfo 劫持完成，使用代理直链: {source['Path'][:60]}...")
+                                logger.info(f"  ✅ PlaybackInfo 劫持完成，使用代理直链: {proxy_play_url}")
                                 modified = True
                             
                     if modified:
