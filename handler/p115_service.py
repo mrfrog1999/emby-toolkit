@@ -413,7 +413,7 @@ class SmartOrganizer:
 
         # 4. 编码 (Codec)
         codec = ""
-        if re.search(r'[HX]265|HEVC', name_upper): info_tags.append('x265')
+        if re.search(r'[HX]265|HEVC', name_upper): info_tags.append('H265')
         elif re.search(r'[HX]264|AVC', name_upper): info_tags.append('H264')
         elif re.search(r'AV1', name_upper): info_tags.append('AV1')
         elif re.search(r'MPEG-?2', name_upper): info_tags.append('MPEG2')
@@ -639,7 +639,7 @@ class SmartOrganizer:
                 return True
         return False
 
-    def execute(self, root_item, target_cid, webhook=False):
+    def execute(self, root_item, target_cid):
         """
         执行整理：先尝试创建，失败后再查找（高效率模式），且一步到位移动
         """
@@ -782,11 +782,9 @@ class SmartOrganizer:
                         real_target_cid = s_cid
 
             # 3. 先改名
-            if new_filename != file_name and webhook == False:
+            if new_filename != file_name:
                 if self.client.fs_rename((fid, new_filename)).get('state'):
                     logger.info(f"  ✏️ [重命名] {file_name} -> {new_filename}")
-            else:
-                logger.info(f"  ✏️ [MP上传] 跳过重命名 (已是标准名): {file_name}")
 
             # 4. 一步到位移动到目的地
             if self.client.fs_move(fid, real_target_cid).get('state'):

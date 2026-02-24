@@ -671,7 +671,7 @@ def emby_webhook():
 
                 # logger.info(f"  🚀 [MP上传] 转交 SmartOrganizer.execute 处理...")
                 # 复用 execute 逻辑
-                success = organizer.execute(real_root_item, target_cid, webhook=True)
+                success = organizer.execute(real_root_item, target_cid)
                 
                 if success:
                     # 强制删除 MP 临时目录
