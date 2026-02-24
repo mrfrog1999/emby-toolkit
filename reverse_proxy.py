@@ -853,7 +853,7 @@ def proxy_all(path):
                     
                     # 115 需要特定的请求头
                     # 1. 使用原始浏览器的 User-Agent
-                    # 2. 添加 Referer 伪装成从 Emby 请求
+                    # 2. 添加 Referer 伪装成从 115 请求
                     player_ua = request.headers.get('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
                     
                     # 构造 115 需要的请求头
@@ -863,19 +863,38 @@ def proxy_all(path):
                         'Origin': 'https://www.115.com',
                     }
                     
+                    # 透传 Range 请求头（视频播放需要支持拖动进度条）
+                    range_header = request.headers.get('Range')
+                    if range_header:
+                        headers_115['Range'] = range_header
+                        logger.info(f"[STREAM] 透传 Range: {range_header}")
+                    
                     # 转发请求到 115 直链
                     resp = requests.get(real_115_url, params=forward_params, headers=headers_115, stream=True, timeout=30)
                     
                     logger.info(f"[STREAM] 115 返回状态码: {resp.status_code}")
                     
                     # 透传响应
-                    excluded_resp_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'access-control-allow-origin']
+                    excluded_resp_headers = ['content-encoding', 'transfer-encoding', 'connection', 'access-control-allow-origin']
                     response_headers = [(name, value) for name, value in resp.headers.items() if name.lower() not in excluded_resp_headers]
                     
                     # 添加 CORS 头，允许跨域
                     response_headers.append(('Access-Control-Allow-Origin', '*'))
                     response_headers.append(('Access-Control-Allow-Methods', 'GET, OPTIONS'))
                     response_headers.append(('Access-Control-Allow-Headers', 'Range'))
+                    
+                    # 确保 Content-Length 和 Content-Range 正确传递
+                    if 'content-length' not in [h[0].lower() for h in response_headers]:
+                        content_length = resp.headers.get('Content-Length')
+                        if content_length:
+                            response_headers.append(('Content-Length', content_length))
+                    
+                    # 如果是 206 Partial Content，确保 Content-Range 正确
+                    if resp.status_code == 206:
+                        content_range = resp.headers.get('Content-Range')
+                        if content_range:
+                            response_headers.append(('Content-Range', content_range))
+                            logger.info(f"[STREAM] 透传 Content-Range: {content_range}")
                     
                     return Response(resp.iter_content(chunk_size=8192), resp.status_code, response_headers)
                     
