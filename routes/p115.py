@@ -168,16 +168,40 @@ def handle_sorting_rules():
 # 实例化限流器：建议 2 秒内最多允许 3 次解析请求（针对 115 比较稳妥）
 api_limiter = RateLimiter(max_requests=3, period=2)
 # 全局解析锁：确保同一时间只有一个线程在请求 115 API，防止并发冲突
-fetch_lock = threading.Lock()    
-@lru_cache(maxsize=2048)
+fetch_lock = threading.Lock()
+
+# 用于存储已解析的 URL，配合 lru_cache 使用
+_url_cache = {}
+
 def _get_cached_115_url(pick_code, user_agent, client_ip=None):
     """
     带缓存的 115 直链获取器
+    支持区分缓存命中和首次获取
     """
+    # 构建缓存键
+    cache_key = (pick_code, user_agent, client_ip)
+    
+    # 先检查缓存（不打印日志）
+    if cache_key in _url_cache:
+        cached_url = _url_cache[cache_key]
+        if cached_url:
+            # 缓存命中，直接返回（静默，不打印日志）
+            return cached_url
+    
+    # 缓存未命中，需要请求 115 API
     client = P115Service.get_client()
-    if not client: return None
+    if not client: 
+        # 即使获取失败也存入缓存（None），防止重复请求
+        _url_cache[cache_key] = None
+        return None
+    
     # 使用锁：即使缓存失效，多个请求同时进来，也只有一个能去查 115 API
     with fetch_lock:
+        # 二次检查缓存（可能在锁等待期间被其他线程填充）
+        if cache_key in _url_cache and _url_cache[cache_key]:
+            logger.debug(f"  📥 [115直链] 命中缓存: {pick_code[:8]}...")
+            return _url_cache[cache_key]
+        
         # 这里的限流逻辑：如果令牌不足，直接等待或返回
         if not api_limiter.consume():
             logger.warning(f"  ⚠️ [流控] 请求过快，已拦截 pick_code: {pick_code}")
@@ -191,12 +215,28 @@ def _get_cached_115_url(pick_code, user_agent, client_ip=None):
             url_obj = client.download_url(pick_code, user_agent=user_agent)
             if url_obj:
                 direct_url = str(url_obj)
-                logger.info(f"  🎬 获取[115]直链成功: {url_obj.name}")
+                # 首次获取日志
+                logger.info(f"  🎬 [115直链] 获取成功: {url_obj.name}")
+                # 存入缓存
+                _url_cache[cache_key] = direct_url
                 return direct_url
-            return None
+            else:
+                # 获取失败也存入缓存（None），防止重复请求
+                _url_cache[cache_key] = None
+                return None
         except Exception as e:
             logger.error(f"  ❌ 获取 115 直链 API 报错: {e}")
+            # 异常也存入缓存（None），防止重复请求
+            _url_cache[cache_key] = None
             return None
+
+# 保留原来的 lru_cache 装饰器作为备用（用于 play_115_video 直接调用）
+@lru_cache(maxsize=2048)
+def _get_cached_115_url_legacy(pick_code, user_agent, client_ip=None):
+    """
+    带缓存的 115 直链获取器（旧版本，保留兼容性）
+    """
+    return _get_cached_115_url(pick_code, user_agent, client_ip)
 
 @p115_bp.route('/play/<pick_code>', methods=['GET', 'HEAD']) # 允许 HEAD 请求，加速客户端嗅探
 def play_115_video(pick_code):
