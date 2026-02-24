@@ -599,7 +599,7 @@ class SmartOrganizer:
             time.sleep(1.5) 
             
             # limit 调大一点，防止文件过多漏掉
-            res = self.client.fs_files({'cid': cid, 'limit': 1000, 'record_open_time': 0, 'count_folders': 0})
+            res = self.client.fs_files_app({'cid': cid, 'limit': 1000, 'record_open_time': 0, 'count_folders': 0})
             if res.get('data'):
                 for item in res['data']:
                     # 如果是文件 (有 fid)
@@ -701,7 +701,7 @@ class SmartOrganizer:
                     limit = 1000
                     while True:
                         try:
-                            res = self.client.fs_files({'cid': dest_parent_cid, 'limit': limit, 'offset': offset, 'type': 0, 'record_open_time': 0, 'count_folders': 0})
+                            res = self.client.fs_files_app({'cid': dest_parent_cid, 'limit': limit, 'offset': offset, 'type': 0, 'record_open_time': 0, 'count_folders': 0})
                             data = res.get('data', [])
                             if not data: break # 翻到底了
                             
@@ -934,7 +934,7 @@ def get_115_account_info():
 
     try:
         # 尝试列出 1 个文件，这是验证 Cookie 最快最准的方法
-        resp = client.fs_files({'limit': 1, 'record_open_time': 0, 'count_folders': 0})
+        resp = client.fs_files_app({'limit': 1, 'record_open_time': 0, 'count_folders': 0})
 
         if not resp.get('state'):
             raise Exception("Cookie 已失效")
@@ -1089,7 +1089,7 @@ def task_scan_and_organize_115(processor=None):
         for retry in range(3):
             try:
                 time.sleep(2)
-                res = client.fs_files({
+                res = client.fs_files_app({
                     'cid': save_cid, 'limit': 50, 'o': 'user_utime', 'asc': 0,
                     'record_open_time': 0, 'count_folders': 0
                 })
@@ -1126,7 +1126,7 @@ def task_scan_and_organize_115(processor=None):
                 for retry in range(2):
                     try:
                         time.sleep(2)
-                        sub_res = client.fs_files({
+                        sub_res = client.fs_files_app({
                             'cid': item.get('cid'), 'limit': 20, 
                             'nf': 1, # ★ 核心优化：只返回文件夹，不返回文件
                             'record_open_time': 0, 'count_folders': 0
@@ -1249,7 +1249,7 @@ def task_sync_115_directory_tree(processor=None):
 
             try:
                 # 获取数据列表
-                res = client.fs_files({'cid': cid, 'limit': limit, 'offset': offset, 'record_open_time': 0, 'count_folders': 0})
+                res = client.fs_files_app({'cid': cid, 'limit': limit, 'offset': offset, 'record_open_time': 0, 'count_folders': 0})
                 data = res.get('data', [])
                 
                 if not data: 
@@ -1345,7 +1345,7 @@ def task_full_sync_strm_and_subs(processor=None):
             target_cids.append(cid)
             try:
                 # 获取该目录的完整链路信息
-                dir_info = client.fs_files({'cid': cid, 'limit': 1, 'record_open_time': 0, 'count_folders': 0})
+                dir_info = client.fs_files_app({'cid': cid, 'limit': 1, 'record_open_time': 0, 'count_folders': 0})
                 path_nodes = dir_info.get('path', [])
                 
                 start_idx = 0
@@ -1506,7 +1506,7 @@ def task_full_sync_strm_and_subs(processor=None):
                 offset = 0
                 limit = 1000
                 while True:
-                    res = client.fs_files({'cid': cid, 'limit': limit, 'offset': offset, 'record_open_time': 0, 'count_folders': 0})
+                    res = client.fs_files_app({'cid': cid, 'limit': limit, 'offset': offset, 'record_open_time': 0, 'count_folders': 0})
                     data = res.get('data', [])
                     if not data: break
                     for item in data:
@@ -1610,7 +1610,7 @@ def delete_115_files_by_webhook(item_path, pickcodes):
         def scan_and_match(cid):
             try:
                 time.sleep(1.5) # ★ 强制防风控限流：每次请求间隔 1.5 秒
-                res = client.fs_files({'cid': cid, 'limit': 1000, 'record_open_time': 0, 'count_folders': 0})
+                res = client.fs_files_app({'cid': cid, 'limit': 1000, 'record_open_time': 0, 'count_folders': 0})
                 for item in res.get('data', []):
                     if item.get('fid'):
                         # 如果文件的提取码在我们要删除的列表中
@@ -1638,7 +1638,7 @@ def delete_115_files_by_webhook(item_path, pickcodes):
                 nonlocal video_count
                 try:
                     time.sleep(1.5) # ★ 强制防风控限流
-                    res = client.fs_files({'cid': cid, 'limit': 1000, 'record_open_time': 0, 'count_folders': 0})
+                    res = client.fs_files_app({'cid': cid, 'limit': 1000, 'record_open_time': 0, 'count_folders': 0})
                     for item in res.get('data', []):
                         if item.get('fid'):
                             ext = str(item.get('n', '')).split('.')[-1].lower()

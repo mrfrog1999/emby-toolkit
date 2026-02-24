@@ -636,7 +636,7 @@ def push_to_115(resource_link, title, tmdb_id=None, media_type=None):
     existing_ids = set()
     try:
         # 扫描前50个文件即可，通常新文件在最前
-        files_res = client.fs_files({'cid': save_path_cid, 'limit': 50, 'o': 'user_ptime', 'asc': 0, 'record_open_time': 0, 'count_folders': 0})
+        files_res = client.fs_files_app({'cid': save_path_cid, 'limit': 50, 'o': 'user_ptime', 'asc': 0, 'record_open_time': 0, 'count_folders': 0})
         if files_res.get('data'):
             for item in files_res['data']:
                 item_id = item.get('fid') or item.get('cid') 
@@ -709,7 +709,7 @@ def push_to_115(resource_link, title, tmdb_id=None, media_type=None):
         for i in range(max_retries):
             time.sleep(3)
             try:
-                check_res = client.fs_files({'cid': save_path_cid, 'limit': 50, 'o': 'user_ptime', 'asc': 0, 'record_open_time': 0, 'count_folders': 0})
+                check_res = client.fs_files_app({'cid': save_path_cid, 'limit': 50, 'o': 'user_ptime', 'asc': 0, 'record_open_time': 0, 'count_folders': 0})
                 if check_res.get('data'):
                     for item in check_res['data']:
                         current_id = item.get('fid') or item.get('cid')
