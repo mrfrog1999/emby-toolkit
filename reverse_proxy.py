@@ -1,4 +1,4 @@
-# reverse_proxy.py (最终完美版 V5 - 实时架构适配 + CORS修复)
+# reverse_proxy.py (最终完美版 V5 - 实时架构适配)
 
 import logging
 import requests
@@ -823,25 +823,11 @@ def proxy_all(path):
             except Exception as e:
                 logger.error(f"[STREAM] 获取 115 直链失败: {e}")
             
-            # 对于浏览器，不劫持，让Emby自己处理转码
-            # 只有本地客户端才使用302重定向到115直链
-            user_agent = request.headers.get('User-Agent', '').lower()
-            is_browser = 'mozilla' in user_agent or 'chrome' in user_agent or 'safari' in user_agent
-            
-            # 排除已知的本地播放器
-            native_clients = ['androidtv', 'infuse', 'emby for ios', 'emby for android', 'emby theater', 'senplayer']
-            client_name = request.headers.get('X-Emby-Client', '').lower()
-            if any(nc in client_name for nc in native_clients) or 'infuse' in user_agent or 'dalvik' in user_agent:
-                is_browser = False
-            
-            if real_115_url and not is_browser:
-                # 本地客户端：302重定向
-                logger.info(f"[STREAM] 本地客户端模式，直接 302 重定向到 115 直链")
+            # 【修复核心】如果获取到 115 直链，直接 302 重定向！不要用 Python 中转流！
+            # 这样 Infuse 等播放器会自己去连 115，完美支持拖动进度条，且不消耗服务器带宽。
+            if real_115_url:
+                logger.info(f"[STREAM] 拦截到客户端视频流请求，直接 302 重定向到 115 直链")
                 return redirect(real_115_url, code=302)
-            elif real_115_url and is_browser:
-                # 浏览器：不劫持，让Emby自己处理（转码或播放本地文件）
-                logger.info(f"[STREAM] 浏览器模式，不劫持，让Emby自己处理转码")
-                # 继续往下走，转发请求给Emby
             
             # 如果获取失败，回退到原来的转发方式
             logger.info(f"[STREAM] 回退到转发模式")
