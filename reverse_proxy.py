@@ -851,8 +851,20 @@ def proxy_all(path):
                     # 使用原始请求的所有参数，但去掉 api_key（115 不需要）
                     forward_params = {k: v for k, v in request.args.items() if k != 'api_key'}
                     
+                    # 115 需要特定的请求头
+                    # 1. 使用原始浏览器的 User-Agent
+                    # 2. 添加 Referer 伪装成从 Emby 请求
+                    player_ua = request.headers.get('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+                    
+                    # 构造 115 需要的请求头
+                    headers_115 = {
+                        'User-Agent': player_ua,
+                        'Referer': 'https://www.115.com/',
+                        'Origin': 'https://www.115.com',
+                    }
+                    
                     # 转发请求到 115 直链
-                    resp = requests.get(real_115_url, params=forward_params, headers=forward_headers, stream=True, timeout=30)
+                    resp = requests.get(real_115_url, params=forward_params, headers=headers_115, stream=True, timeout=30)
                     
                     logger.info(f"[STREAM] 115 返回状态码: {resp.status_code}")
                     
