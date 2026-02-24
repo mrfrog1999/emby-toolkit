@@ -782,7 +782,7 @@ def proxy_all(path):
     try:
         full_path = f'/{path}'
         # ===== 调试日志：打印所有请求路径 =====
-        logger.info(f"[PROXY] 请求路径: {full_path}")
+        # logger.info(f"[PROXY] 请求路径: {full_path}")
         
         # ====================================================================
         # ★★★ 拦截 H: 视频流请求 (stream.mkv, stream.mp4, original.mp4 等) ★★★
@@ -800,7 +800,7 @@ def proxy_all(path):
             
             # 浏览器直接转发给 Emby 服务端，不做 302 重定向（115 直链存在跨域问题）
             if is_browser:
-                logger.info(f"[STREAM] 识别为浏览器，直接转发给 Emby 服务端，不做 302 重定向")
+                # logger.info(f"[STREAM] 识别为浏览器，直接转发给 Emby 服务端，不做 302 重定向")
                 base_url, api_key = _get_real_emby_url_and_key()
                 target_url = f"{base_url}/{path.lstrip('/')}"
                 forward_headers = {k: v for k, v in request.headers if k.lower() not in ['host', 'accept-encoding']}
@@ -849,7 +849,7 @@ def proxy_all(path):
             # 如果获取到 115 直链，直接 302 重定向！不要用 Python 中转流！
             # 这样 Infuse 等播放器会自己去连 115，完美支持拖动进度条，且不消耗服务器带宽。
             if real_115_url:
-                logger.info(f"[STREAM] 拦截到本地客户端视频流请求，直接 302 重定向到 115 直链")
+                # logger.info(f"[STREAM] 拦截到本地客户端视频流请求，直接 302 重定向到 115 直链")
                 return redirect(real_115_url, code=302)
             
             # 如果获取失败，回退到原来的转发方式
@@ -870,7 +870,7 @@ def proxy_all(path):
                     client_ip = request.headers.get('X-Real-IP', request.remote_addr)
                     real_115_url = _get_cached_115_url(pick_code, player_ua, client_ip)
                     if real_115_url:
-                        logger.info(f"[STREAM] 拦截到 302 跳转，直接重定向到 115 直链")
+                        logger.info(f"  ✅ 已 302 跳转重定向到 115 直链")
                         return redirect(real_115_url, code=302)
             
             excluded_resp_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
@@ -917,11 +917,11 @@ def proxy_all(path):
                                 if any(nc in client_name for nc in native_clients) or 'infuse' in user_agent or 'dalvik' in user_agent:
                                     is_browser = False
                                 
-                                logger.info(f"  🔍 客户端名称: {client_name}, User-Agent: {user_agent[:50]}, 是否浏览器: {is_browser}")
+                                # logger.info(f"  🔍 客户端名称: {client_name}, User-Agent: {user_agent[:50]}, 是否浏览器: {is_browser}")
                                 
                                 if is_browser:
                                     # 浏览器直接转发给 Emby 服务端处理，不做劫持（115 直链存在跨域问题）
-                                    logger.info(f"  ⏭️ [PlaybackInfo] 识别为浏览器，直接转发给 Emby 服务端，不做劫持")
+                                    logger.info(f"  ⏭️ 浏览器，直接转发给 Emby 服务端，不做302重定向")
                                 else:
                                     # 对于 Android TV, Infuse 等本地客户端进行劫持
                                     # 保持 Emby 原生的 .strm 逻辑，让客户端自己去请求流，然后我们在上面的拦截 H 处给它 302 重定向。
@@ -933,7 +933,7 @@ def proxy_all(path):
                                     source['SupportsDirectPlay'] = True
                                     source['SupportsDirectStream'] = True
                                     source['SupportsTranscoding'] = False
-                                    logger.info(f"  ✅ [PlaybackInfo] 识别为本地客户端，已注入 115 直链")
+                                    # logger.info(f"  ✅ [PlaybackInfo] 识别为本地客户端，已注入 115 直链")
                                     modified = True
                             
                     if modified:

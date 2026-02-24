@@ -191,7 +191,7 @@ def _get_cached_115_url(pick_code, user_agent, client_ip=None):
             url_obj = client.download_url(pick_code, user_agent=user_agent)
             if url_obj:
                 direct_url = str(url_obj)
-                logger.info(f"  🎬 获取[115]直链成功: {direct_url[:50]}...")
+                logger.info(f"  🎬 获取[115]直链成功: {url_obj.name}")
                 return direct_url
             return None
         except Exception as e:
