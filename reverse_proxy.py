@@ -785,6 +785,42 @@ def proxy_all(path):
         logger.info(f"[PROXY] 请求路径: {full_path}")
         
         # ====================================================================
+        # ★★★ 拦截 H: 视频流请求 (stream.mkv, stream.mp4 等) ★★★
+        # ====================================================================
+        if '/videos/' in path and '/stream.' in path:
+            # 转发到真实 Emby 获取响应
+            base_url, api_key = _get_real_emby_url_and_key()
+            target_url = f"{base_url}/{path.lstrip('/')}"
+            
+            forward_headers = {k: v for k, v in request.headers if k.lower() not in ['host', 'accept-encoding']}
+            forward_headers['Host'] = urlparse(base_url).netloc
+            forward_params = request.args.copy()
+            forward_params['api_key'] = api_key
+            
+            resp = requests.request(method=request.method, url=target_url, headers=forward_headers, params=forward_params, data=request.get_data(), timeout=10, allow_redirects=False)
+            
+            # 如果返回 302 重定向，检查是否是 115 直链
+            if resp.status_code in [301, 302]:
+                redirect_url = resp.headers.get('Location', '')
+                logger.info(f"[STREAM] 原始重定向: {redirect_url}")
+                
+                # 如果重定向到 /api/p115/play/，我们需要拦截并替换
+                if '/api/p115/play/' in redirect_url:
+                    pick_code = redirect_url.split('/play/')[-1].split('?')[0].strip()
+                    player_ua = request.headers.get('User-Agent', 'Mozilla/5.0')
+                    real_115_url = _get_cached_115_url(pick_code, player_ua)
+                    
+                    if real_115_url:
+                        logger.info(f"[STREAM] 拦截 115 重定向: {real_115_url[:60]}...")
+                        # 返回 302 重定向到真实的 115 直链
+                        return Response('', status=302, headers={'Location': real_115_url})
+            
+            # 透传其他响应
+            excluded_resp_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
+            response_headers = [(name, value) for name, value in resp.headers.items() if name.lower() not in excluded_resp_headers]
+            return Response(resp.content, resp.status_code, response_headers)
+        
+        # ====================================================================
         # ★★★ 终极拦截 G: PlaybackInfo 智能劫持 (完美兼容版) ★★★
         # ====================================================================
         if 'PlaybackInfo' in path:
