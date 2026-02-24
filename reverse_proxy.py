@@ -871,9 +871,9 @@ def proxy_all(path):
                             if real_115_cdn_url:
                                 logger.info(f"  🎬 获取到 115 直链: {real_115_cdn_url[:80]}...")
                                 
-                                # 检测是否为浏览器客户端
-                                is_browser = 'emby web' in client_name or 'jellyfin web' in client_name
-                                logger.info(f"  🔍 客户端名称: {client_name}, 是否浏览器: {is_browser}")
+                                # 检测是否为浏览器客户端 - 使用 User-Agent
+                                is_browser = 'mozilla' in user_agent or 'chrome' in user_agent or 'safari' in user_agent
+                                logger.info(f"  🔍 客户端名称: {client_name}, User-Agent: {user_agent[:50]}, 是否浏览器: {is_browser}")
                                 
                                 if is_browser:
                                     # 浏览器需要使用 RemoteUrl 字段
