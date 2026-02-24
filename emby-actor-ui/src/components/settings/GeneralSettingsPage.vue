@@ -299,6 +299,13 @@
                         </template>
                     </n-form-item>
 
+                    <n-form-item label="ETK 公网访问地址" path="etk_public_url">
+                        <n-input v-model:value="configModel.etk_public_url" placeholder="http://abc.com" />
+                        <template #feedback>
+                            <n-text depth="3" style="font-size:0.8em;">无外网播放需求可忽略</n-text>
+                        </template>
+                    </n-form-item>
+
                     <n-form-item label="需要整理的扩展名" path="p115_extensions">
                       <n-select
                         v-model:value="configModel.p115_extensions"

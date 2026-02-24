@@ -117,6 +117,7 @@ DYNAMIC_CONFIG_DEF = {
     constants.CONFIG_OPTION_115_MEDIA_ROOT_NAME: (constants.CONFIG_SECTION_115, 'string', "媒体库"),
     constants.CONFIG_OPTION_LOCAL_STRM_ROOT: (constants.CONFIG_SECTION_115, 'string', "/mnt/media"),
     constants.CONFIG_OPTION_ETK_SERVER_URL: (constants.CONFIG_SECTION_115, 'string', "http://192.168.1.X:5257"),
+    constants.CONFIG_OPTION_ETK_PUBLIC_URL: (constants.CONFIG_SECTION_115, 'string', "http://abc.com"),
     constants.CONFIG_OPTION_115_ENABLE_SYNC_DELETE: (constants.CONFIG_SECTION_115, 'boolean', False),
     constants.CONFIG_OPTION_115_DOWNLOAD_SUBS: (constants.CONFIG_SECTION_115, 'boolean', True),
     constants.CONFIG_OPTION_115_LOCAL_CLEANUP: (constants.CONFIG_SECTION_115, 'boolean', False),
