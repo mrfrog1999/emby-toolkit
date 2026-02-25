@@ -143,7 +143,7 @@ class P115CookieClient:
 
 
 # ======================================================================
-# ★★★ 115 服务管理器 (分离管理/播放客户端) ★★★
+# ★★★ 115 服务管理器 (分离管理/播放客户端 + 延迟初始化) ★★★
 # ======================================================================
 class P115Service:
     """统一管理 OpenAPI 和 Cookie 客户端"""
@@ -160,7 +160,7 @@ class P115Service:
 
     @classmethod
     def get_openapi_client(cls):
-        """获取管理客户端 (OpenAPI)"""
+        """获取管理客户端 (OpenAPI) - 启动时初始化"""
         config = get_config()
         token = config.get(constants.CONFIG_OPTION_115_TOKEN, "").strip()
         
@@ -180,8 +180,8 @@ class P115Service:
             return cls._openapi_client
 
     @classmethod
-    def get_cookie_client(cls):
-        """获取播放客户端 (Cookie)"""
+    def init_cookie_client(cls):
+        """初始化 Cookie 客户端 (延迟到播放请求时)"""
         config = get_config()
         cookie = config.get(constants.CONFIG_OPTION_115_COOKIES, "").strip()
         
@@ -189,6 +189,7 @@ class P115Service:
             return None
 
         with cls._lock:
+            # 双重检查：检查配置是否变化
             if cls._cookie_client is None or cookie != cls._cookie_cache:
                 try:
                     cls._cookie_client = P115CookieClient(cookie)
@@ -199,6 +200,24 @@ class P115Service:
                     cls._cookie_client = None
             
             return cls._cookie_client
+
+    @classmethod
+    def get_cookie_client(cls):
+        """获取播放客户端 (Cookie) - 延迟初始化，失败时重试"""
+        # 如果已经初始化过，直接返回
+        if cls._cookie_client is not None:
+            return cls._cookie_client
+        
+        # 未初始化，尝试初始化（可能容器重启后首次调用）
+        return cls.init_cookie_client()
+    
+    @classmethod
+    def reset_cookie_client(cls):
+        """重置 Cookie 客户端 (当检测到失效时调用)"""
+        with cls._lock:
+            cls._cookie_client = None
+            cls._cookie_cache = None
+            logger.info("  🔄 [115] Cookie 客户端已重置，下次请求将重新初始化")
 
     @classmethod
     def get_client(cls):
