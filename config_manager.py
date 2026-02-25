@@ -103,6 +103,7 @@ DYNAMIC_CONFIG_DEF = {
     constants.CONFIG_OPTION_MONITOR_EXCLUDE_REFRESH_DELAY: (constants.CONFIG_SECTION_MONITOR, 'int', constants.DEFAULT_MONITOR_EXCLUDE_REFRESH_DELAY),
 
     # [115] 
+    constants.CONFIG_OPTION_115_TOKEN: (constants.CONFIG_SECTION_115, 'string', ""),
     constants.CONFIG_OPTION_115_COOKIES: (constants.CONFIG_SECTION_115, 'string', ""),
     constants.CONFIG_OPTION_115_SAVE_PATH_CID: (constants.CONFIG_SECTION_115, 'string', "0"),
     constants.CONFIG_OPTION_115_SAVE_PATH_NAME: (constants.CONFIG_SECTION_115, 'string', "根目录"),

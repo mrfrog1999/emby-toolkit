@@ -21,10 +21,13 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # ======================================================================
-# ★★★ 终极武器：115 官方 OpenAPI 客户端 (绝对无 405) ★★★
+# ★★★ 115 OpenAPI 客户端 (仅管理操作：扫描/创建目录/移动文件) ★★★
 # ======================================================================
 class P115OpenAPIClient:
+    """使用 Access Token 进行管理操作"""
     def __init__(self, access_token):
+        if not access_token:
+            raise ValueError("Access Token 不能为空")
         self.access_token = access_token.strip()
         self.base_url = "https://proapi.115.com"
         self.headers = {
@@ -32,18 +35,21 @@ class P115OpenAPIClient:
             "User-Agent": "Emby-toolkit/1.0 (OpenAPI)"
         }
 
+    def get_user_info(self):
+        url = f"{self.base_url}/open/user/info"
+        try:
+            return requests.get(url, headers=self.headers, timeout=10).json()
+        except Exception as e:
+            return {"state": False, "message": str(e)}
+
     def fs_files(self, payload):
+        """获取文件列表 - 纯净 OpenAPI 版 (严格返回官方原始字段)"""
         url = f"{self.base_url}/open/ufile/files"
         params = {"show_dir": 1, "limit": 1000, "offset": 0}
         if isinstance(payload, dict): params.update(payload)
+        
         try:
-            resp = requests.get(url, params=params, headers=self.headers, timeout=30).json()
-            if resp.get("state") and resp.get("data"):
-                for item in resp["data"]:
-                    item['n'] = item.get('fn', '')
-                    item['cid'] = item.get('fid', '')
-                    item['s'] = item.get('fs', 0)
-            return resp
+            return requests.get(url, params=params, headers=self.headers, timeout=30).json()
         except Exception as e:
             return {"state": False, "error_msg": str(e)}
 
@@ -65,81 +71,185 @@ class P115OpenAPIClient:
         fids_str = ",".join([str(f) for f in fids]) if isinstance(fids, list) else str(fids)
         return requests.post(f"{self.base_url}/open/ufile/delete", data={"file_ids": fids_str}, headers=self.headers).json()
 
-    def download_url(self, pick_code, user_agent=None):
-        url = f"{self.base_url}/open/ufile/downurl"
-        headers = dict(self.headers)
-        headers["Content-Type"] = "application/x-www-form-urlencoded"
-        if user_agent: headers["User-Agent"] = user_agent
-        try:
-            resp = requests.post(url, data={"pick_code": str(pick_code)}, headers=headers, timeout=30).json()
-            if resp.get("state") and resp.get("data"):
-                for k, v in resp["data"].items():
-                    if isinstance(v, dict):
-                        url_info = v.get("url")
-                        return url_info.get("url") if isinstance(url_info, dict) else url_info
-            return None
-        except Exception:
-            return None
 
 # ======================================================================
-# ★★★ 究极缝合怪：混合双打客户端 (OpenAPI防405 + Cookie防403) ★★★
+# ★★★ 115 Cookie 客户端 (仅播放：获取直链) ★★★
 # ======================================================================
-class Hybrid115Client:
-    def __init__(self, access_token, cookie_str):
-        self.openapi = P115OpenAPIClient(access_token) if access_token else None
+class P115CookieClient:
+    """使用 Cookie 进行播放操作"""
+    def __init__(self, cookie_str):
+        if not cookie_str:
+            raise ValueError("Cookie 不能为空")
+        self.cookie_str = cookie_str.strip()
         self.webapi = None
-        if cookie_str and P115Client:
+        if P115Client:
             try:
-                self.webapi = P115Client(cookie_str)
-                # ★★★ 核心修复：删除了强行伪装 Chrome UA 的代码！★★★
-                # 必须让它保持原样，这样才能把播放器的真实 UA 透传给 115，防止 CDN 报 403！
+                self.webapi = P115Client(self.cookie_str)
             except Exception as e:
-                logger.warning(f"  ⚠️ Cookie 客户端初始化失败 (仅影响播放): {e}")
-
-    def fs_files(self, payload):
-        if self.openapi: return self.openapi.fs_files(payload)
-        if self.webapi: return self.webapi.fs_files(payload)
-        return {"state": False, "error_msg": "未配置任何 115 凭证"}
-
-    def fs_files_app(self, payload):
-        if self.openapi: return self.openapi.fs_files_app(payload)
-        if self.webapi:
-            try: return self.webapi.fs_files_app(payload)
-            except: return self.webapi.fs_files(payload)
-        return {"state": False, "error_msg": "未配置任何 115 凭证"}
-
-    def fs_mkdir(self, name, pid):
-        if self.openapi: return self.openapi.fs_mkdir(name, pid)
-        return self.webapi.fs_mkdir(name, pid)
-
-    def fs_move(self, fid, to_cid):
-        if self.openapi: return self.openapi.fs_move(fid, to_cid)
-        return self.webapi.fs_move(fid, to_cid)
-
-    def fs_rename(self, fid_name_tuple):
-        if self.openapi: return self.openapi.fs_rename(fid_name_tuple)
-        return self.webapi.fs_rename(fid_name_tuple)
-
-    def fs_delete(self, fids):
-        if self.openapi: return self.openapi.fs_delete(fids)
-        return self.webapi.fs_delete(fids)
+                logger.warning(f"  ⚠️ Cookie 客户端初始化失败: {e}")
+                raise
 
     def download_url(self, pick_code, user_agent=None):
-        # ★★★ 播放直链优先使用 Cookie，并透传播放器的真实 UA ★★★
+        """获取直链 (仅 Cookie 可用)"""
         if self.webapi:
             try:
-                # 这里的 user_agent 就是 Emby 播放器传过来的真实身份
                 url_obj = self.webapi.download_url(pick_code, user_agent=user_agent)
-                if url_obj:
-                    logger.info(f"  🎬 [Hybrid] 成功获取绑定 UA ({str(user_agent)[:15]}...) 的 302 直链！")
-                    return str(url_obj)
+                if url_obj: return str(url_obj)
             except Exception as e:
-                logger.warning(f"  ⚠️ [Hybrid] Cookie 获取直链失败，尝试回退 OpenAPI: {e}")
-        
-        if self.openapi:
-            logger.warning("  ⚠️ [Hybrid] 正在使用 OpenAPI 获取直链 (播放器可能会报 403 Forbidden)")
-            return self.openapi.download_url(pick_code, user_agent=user_agent)
+                logger.warning(f"  ⚠️ Cookie 直链获取失败: {e}")
         return None
+
+    def get_user_info(self):
+        """获取用户信息 (仅用于验证)"""
+        if self.webapi:
+            try:
+                # Cookie 模式获取用户信息的方式有限
+                return {"state": True, "data": {"user_name": "Cookie用户"}}
+            except:
+                pass
+        return None
+
+
+# ======================================================================
+# ★★★ 115 服务管理器 (分离管理/播放客户端) ★★★
+# ======================================================================
+class P115Service:
+    """统一管理 OpenAPI 和 Cookie 客户端"""
+    _instance = None
+    _lock = threading.Lock()
+    
+    # 客户端缓存
+    _openapi_client = None
+    _cookie_client = None
+    _token_cache = None
+    _cookie_cache = None
+    
+    _last_request_time = 0
+
+    @classmethod
+    def get_openapi_client(cls):
+        """获取管理客户端 (OpenAPI)"""
+        config = get_config()
+        token = config.get(constants.CONFIG_OPTION_115_TOKEN, "").strip()
+        
+        if not token:
+            return None
+
+        with cls._lock:
+            if cls._openapi_client is None or token != cls._token_cache:
+                try:
+                    cls._openapi_client = P115OpenAPIClient(token)
+                    cls._token_cache = token
+                    logger.info("  🚀 [115] OpenAPI 客户端已初始化 (Token 模式)")
+                except Exception as e:
+                    logger.error(f"  ❌ 115 OpenAPI 客户端初始化失败: {e}")
+                    cls._openapi_client = None
+            
+            return cls._openapi_client
+
+    @classmethod
+    def get_cookie_client(cls):
+        """获取播放客户端 (Cookie)"""
+        config = get_config()
+        cookie = config.get(constants.CONFIG_OPTION_115_COOKIES, "").strip()
+        
+        if not cookie:
+            return None
+
+        with cls._lock:
+            if cls._cookie_client is None or cookie != cls._cookie_cache:
+                try:
+                    cls._cookie_client = P115CookieClient(cookie)
+                    cls._cookie_cache = cookie
+                    logger.info("  🚀 [115] Cookie 客户端已初始化 (播放模式)")
+                except Exception as e:
+                    logger.error(f"  ❌ 115 Cookie 客户端初始化失败: {e}")
+                    cls._cookie_client = None
+            
+            return cls._cookie_client
+
+    @classmethod
+    def get_client(cls):
+        """
+        获取严格分离客户端：
+        管理操作 -> 强制走 OpenAPI
+        播放操作 -> 强制走 Cookie
+        """
+        openapi = cls.get_openapi_client()
+        cookie = cls.get_cookie_client()
+        
+        if not openapi and not cookie:
+            return None
+
+        class StrictSplitClient:
+            def __init__(self, openapi_client, cookie_client):
+                self._openapi = openapi_client
+                self._cookie = cookie_client
+
+            def _check_openapi(self):
+                if not self._openapi:
+                    raise Exception("未配置 115 Token (OpenAPI)，无法执行管理操作")
+
+            def get_user_info(self):
+                if self._openapi: return self._openapi.get_user_info()
+                if self._cookie: return self._cookie.get_user_info()
+                return None
+
+            def fs_files(self, payload):
+                self._check_openapi()
+                return self._openapi.fs_files(payload)
+
+            def fs_files_app(self, payload):
+                self._check_openapi()
+                return self._openapi.fs_files_app(payload)
+
+            def fs_mkdir(self, name, pid):
+                self._check_openapi()
+                return self._openapi.fs_mkdir(name, pid)
+
+            def fs_move(self, fid, to_cid):
+                self._check_openapi()
+                return self._openapi.fs_move(fid, to_cid)
+
+            def fs_rename(self, fid_name_tuple):
+                self._check_openapi()
+                return self._openapi.fs_rename(fid_name_tuple)
+
+            def fs_delete(self, fids):
+                self._check_openapi()
+                return self._openapi.fs_delete(fids)
+
+            def download_url(self, pick_code, user_agent=None):
+                if not self._cookie:
+                    raise Exception("未配置 115 Cookie，无法获取播放直链")
+                return self._cookie.download_url(pick_code, user_agent)
+
+        # 全局限流逻辑
+        with cls._lock:
+            try:
+                interval = float(get_config().get(constants.CONFIG_OPTION_115_INTERVAL, 5.0))
+            except (ValueError, TypeError):
+                interval = 5.0
+            
+            current_time = time.time()
+            elapsed = current_time - cls._last_request_time
+            if elapsed < interval:
+                time.sleep(interval - elapsed)
+            cls._last_request_time = time.time()
+
+        return StrictSplitClient(openapi, cookie)
+    
+    @classmethod
+    def get_cookies(cls):
+        """获取 Cookie (用于直链下载等)"""
+        config = get_config()
+        return config.get(constants.CONFIG_OPTION_115_COOKIES)
+    
+    @classmethod
+    def get_token(cls):
+        """获取 Token (用于 API 调用)"""
+        config = get_config()
+        return config.get(constants.CONFIG_OPTION_115_TOKEN)
 
 
 # ======================================================================
@@ -209,77 +319,6 @@ class P115CacheManager:
 def get_config():
     return config_manager.APP_CONFIG
 
-class P115Service:
-    _instance = None
-    _lock = threading.Lock()
-    _client = None
-    _last_request_time = 0
-    _cookies_cache = None
-
-    @classmethod
-    def get_client(cls):
-        config = get_config()
-        auth_str = config.get(constants.CONFIG_OPTION_115_COOKIES, "").strip()
-        
-        if not auth_str: return None
-
-        with cls._lock:
-            if cls._client is None or auth_str != cls._cookies_cache:
-                try:
-                    access_token = None
-                    cookie_str = None
-                    
-                    # ★ 核心解析逻辑：支持同时填入 Token 和 Cookie，用 ||| 隔开
-                    if "|||" in auth_str:
-                        parts = auth_str.split("|||")
-                        for p in parts:
-                            p = p.strip()
-                            if p.startswith("g3cts.") or len(p) == 128:
-                                access_token = p
-                            elif "UID=" in p or "CID=" in p:
-                                cookie_str = p
-                    else:
-                        if auth_str.startswith("g3cts.") or len(auth_str) == 128:
-                            access_token = auth_str
-                        else:
-                            cookie_str = auth_str
-
-                    if access_token and cookie_str:
-                        logger.info("  🚀 [115] 检测到双凭证！启用混合双打模式 (OpenAPI防405 + Cookie防403)")
-                    elif access_token:
-                        logger.info("  🚀 [115] 仅检测到 Access Token，启用纯 OpenAPI 模式 (注意：播放可能403)")
-                    else:
-                        logger.warning("  ⚠️ [115] 仅检测到 Cookie，启用纯 WebAPI 模式 (注意：扫描可能405)")
-
-                    cls._client = Hybrid115Client(access_token, cookie_str)
-                    cls._cookies_cache = auth_str
-                except Exception as e:
-                    logger.error(f"  ❌ 115 客户端初始化失败: {e}")
-                    return None
-            
-            # 全局限流逻辑
-            try:
-                interval = float(config.get(constants.CONFIG_OPTION_115_INTERVAL, 5.0))
-            except (ValueError, TypeError):
-                interval = 5.0
-            current_time = time.time()
-            elapsed = current_time - cls._last_request_time
-            
-            if elapsed < interval:
-                sleep_time = interval - elapsed
-                if sleep_time > 1:
-                    logger.debug(f"  ⏳ [115限流] 全局等待 {sleep_time:.2f} 秒...")
-                time.sleep(sleep_time)
-            
-            cls._last_request_time = time.time()
-            
-            return cls._client
-
-    @classmethod
-    def get_cookies(cls):
-        config = get_config()
-        return config.get(constants.CONFIG_OPTION_115_COOKIES)
-    
 class SmartOrganizer:
     def __init__(self, client, tmdb_id, media_type, original_title):
         self.client = client
@@ -638,7 +677,7 @@ class SmartOrganizer:
         重命名单个文件节点
         修复：字幕文件先剥离语言标签，再提取Tags，确保能识别到被语言标签挡住的发布组。
         """
-        original_name = file_node.get('n', '')
+        original_name = file_node.get('fn', '')
         if '.' not in original_name: return original_name, None
 
         # 分离文件名和扩展名
@@ -728,28 +767,21 @@ class SmartOrganizer:
             return new_name, None
 
     def _scan_files_recursively(self, cid, depth=0, max_depth=3):
-        """递归扫描文件夹，返回所有文件的扁平列表"""
         all_files = []
         if depth > max_depth: return []
-
         try:
-            # ★ 修复1：增加防风控延时，防止触发阿里云 WAF 405 拦截
             time.sleep(1.5) 
-            
-            # limit 调大一点，防止文件过多漏掉
             res = self.client.fs_files({'cid': cid, 'limit': 1000, 'record_open_time': 0, 'count_folders': 0})
             if res.get('data'):
                 for item in res['data']:
-                    # 如果是文件 (有 fid)
-                    if item.get('fid'):
+                    # 官方文档：fc=1 是文件，fc=0 是文件夹
+                    if str(item.get('fc')) == '1':
                         all_files.append(item)
-                    # 如果是文件夹 (无 fid)，且未达深度限制，递归
-                    elif item.get('cid'):
-                        sub_files = self._scan_files_recursively(item.get('cid'), depth + 1, max_depth)
+                    elif str(item.get('fc')) == '0':
+                        sub_files = self._scan_files_recursively(item.get('fid'), depth + 1, max_depth)
                         all_files.extend(sub_files)
         except Exception as e:
             logger.warning(f"  ⚠️ 扫描目录出错 (CID: {cid}): {e}")
-
         return all_files
 
     def _is_junk_file(self, filename):
@@ -792,9 +824,9 @@ class SmartOrganizer:
         safe_title = re.sub(r'[\\/:*?"<>|]', '', title).strip()
         std_root_name = f"{safe_title} ({year}) {{tmdb={self.tmdb_id}}}" if year else f"{safe_title} {{tmdb={self.tmdb_id}}}"
 
-        source_root_id = root_item.get('fid') or root_item.get('cid')
-        is_source_file = bool(root_item.get('fid'))
-        dest_parent_cid = target_cid if (target_cid and str(target_cid) != '0') else root_item.get('cid')
+        source_root_id = root_item.get('fid')
+        is_source_file = str(root_item.get('fc')) == '1'
+        dest_parent_cid = target_cid if (target_cid and str(target_cid) != '0') else root_item.get('pid')
 
         config = get_config()
         configured_exts = config.get(constants.CONFIG_OPTION_115_EXTENSIONS, [])
@@ -802,7 +834,7 @@ class SmartOrganizer:
         known_video_exts = {'mp4', 'mkv', 'avi', 'ts', 'iso', 'rmvb', 'wmv', 'mov', 'm2ts', 'flv', 'mpg'}
         MIN_VIDEO_SIZE = 10 * 1024 * 1024
 
-        logger.info(f"  🚀 [115] 开始整理: {root_item.get('n')} -> {std_root_name}")
+        logger.info(f"  🚀 [115] 开始整理: {root_item.get('fn')} -> {std_root_name}")
 
         # ==================================================
         # 步骤 A: 获取主目录 CID (★ 纯净增强版：先DB -> 再创建 -> 搜索 -> 暴力翻页)
@@ -824,8 +856,8 @@ class SmartOrganizer:
                     search_res = self.client.fs_files({'cid': dest_parent_cid, 'search_value': std_root_name, 'limit': 1150, 'record_open_time': 0, 'count_folders': 0})
                     if search_res.get('data'):
                         for item in search_res['data']:
-                            if item.get('n') == std_root_name and not item.get('fid'):
-                                final_home_cid = item.get('cid')
+                            if item.get('fn') == std_root_name and str(item.get('fc')) == '0':
+                                final_home_cid = item.get('fid')
                                 P115CacheManager.save_cid(final_home_cid, dest_parent_cid, std_root_name) # ★ 只在这里存
                                 logger.info(f"  📂 成功查找到已存在主目录并永久缓存: {std_root_name}")
                                 break
@@ -844,8 +876,8 @@ class SmartOrganizer:
                             if not data: break # 翻到底了
                             
                             for item in data:
-                                if item.get('n') == std_root_name:
-                                    final_home_cid = item.get('cid')
+                                if item.get('fn') == std_root_name and str(item.get('fc')) == '0':
+                                    final_home_cid = item.get('fid')
                                     P115CacheManager.save_cid(final_home_cid, dest_parent_cid, std_root_name) # ★ 只在这里存
                                     logger.info(f"  📂 成功查找到已存在主目录并永久缓存: {std_root_name}")
                                     break
@@ -878,13 +910,12 @@ class SmartOrganizer:
         moved_count = 0
         for file_item in candidates:
             fid = file_item.get('fid')
-            file_name = file_item.get('n', '')
+            file_name = file_item.get('fn', '')
             ext = file_name.split('.')[-1].lower() if '.' in file_name else ''
-
             if self._is_junk_file(file_name): continue
             if ext not in allowed_exts: continue
             
-            file_size = _parse_115_size(file_item.get('s') or file_item.get('size'))
+            file_size = _parse_115_size(file_item.get('fs'))
             if ext in known_video_exts and 0 < file_size < MIN_VIDEO_SIZE: continue
 
             # 1. 重命名计算
@@ -912,8 +943,8 @@ class SmartOrganizer:
                         try:
                             s_search = self.client.fs_files({'cid': final_home_cid, 'search_value': s_name, 'limit': 1150, 'record_open_time': 0, 'count_folders': 0})
                             for item in s_search.get('data', []):
-                                if item.get('n') == s_name and not item.get('fid'):
-                                    s_cid = item.get('cid')
+                                if item.get('fn') == s_name and str(item.get('fc')) == '0':
+                                    s_cid = item.get('fid')
                                     break
                         except: pass
                     
@@ -1061,32 +1092,40 @@ def _parse_115_size(size_val):
 
 def get_115_account_info():
     """
-    极简状态检查：只验证 Cookie 是否有效，不获取任何详情
+    获取 115 账号状态及详细信息
     """
     client = P115Service.get_client()
     if not client: raise Exception("无法初始化 115 客户端")
 
     config = get_config()
-    cookies = config.get(constants.CONFIG_OPTION_115_COOKIES)
+    auth_str = config.get(constants.CONFIG_OPTION_115_COOKIES, "")
 
-    if not cookies:
-        raise Exception("未配置 Cookies")
+    if not auth_str:
+        raise Exception("未配置 115 凭证")
 
     try:
-        # 尝试列出 1 个文件，这是验证 Cookie 最快最准的方法
+        # 尝试获取详细用户信息 (仅 OpenAPI 支持)
+        if hasattr(client, 'get_user_info'):
+            user_resp = client.get_user_info()
+            if user_resp and user_resp.get('state'):
+                return {
+                    "valid": True,
+                    "msg": "混合模式正常 (OpenAPI+Cookie)" if "|||" in auth_str else "OpenAPI 模式正常",
+                    "user_info": user_resp.get('data', {})
+                }
+
+        # 如果没有 OpenAPI，回退到基础检查
         resp = client.fs_files_app({'limit': 1})
-
         if not resp.get('state'):
-            raise Exception("Cookie 已失效")
+            raise Exception("凭证已失效")
 
-        # 只要没报错，就是有效
         return {
             "valid": True,
-            "msg": "115 状态正常，Cookie 有效"
+            "msg": "Cookie 模式正常",
+            "user_info": None
         }
-
     except Exception as e:
-        raise Exception("Cookie 无效或网络不通")
+        raise Exception(f"凭证无效或网络不通: {e}")
 
 
 def _identify_media_enhanced(filename, forced_media_type=None):
@@ -1209,8 +1248,8 @@ def task_scan_and_organize_115(processor=None):
             })
             if search_res.get('data'):
                 for item in search_res['data']:
-                    if item.get('n') == unidentified_folder_name and (item.get('ico') == 'folder' or not item.get('fid')):
-                        unidentified_cid = item.get('cid')
+                    if item.get('fn') == unidentified_folder_name and str(item.get('fc')) == '0':
+                        unidentified_cid = item.get('fid')
                         break
         except: pass
 
@@ -1249,11 +1288,10 @@ def task_scan_and_organize_115(processor=None):
         moved_to_unidentified = 0
 
         for item in res['data']:
-            name = item.get('n')
-            if not name:
-                continue
-            item_id = item.get('fid') or item.get('cid')
-            is_folder = not item.get('fid')
+            name = item.get('fn')
+            if not name: continue
+            item_id = item.get('fid')
+            is_folder = str(item.get('fc')) == '0'
 
             if str(item_id) == str(unidentified_cid) or name == unidentified_folder_name:
                 continue
@@ -1275,7 +1313,7 @@ def task_scan_and_organize_115(processor=None):
                         })
                         if sub_res.get('data'):
                             for sub_item in sub_res['data']:
-                                sub_name = sub_item.get('n', '')
+                                sub_name = sub_item.get('fn', '')
                                 if re.search(r'(Season\s?\d+|S\d+|Ep?\d+|第\d+季)', sub_name, re.IGNORECASE):
                                     forced_type = 'tv'
                                     break
@@ -1306,7 +1344,7 @@ def task_scan_and_organize_115(processor=None):
                         processed_count += 1
                         
                         if is_folder:
-                            update_time_str = item.get('te') or item.get('tp') or '0'
+                            update_time_str = item.get('upt') or '0'
                             try:
                                 update_time = int(update_time_str)
                             except:
@@ -1403,10 +1441,9 @@ def task_sync_115_directory_tree(processor=None):
                 with get_db_connection() as conn:
                     with conn.cursor() as cursor:
                         for item in data:
-                            # ★ 核心：没有 fid 的项目才是文件夹
-                            if not item.get('fid'):
-                                sub_cid = item.get('cid')
-                                sub_name = item.get('n')
+                            if str(item.get('fc')) == '0':
+                                sub_cid = item.get('fid')
+                                sub_name = item.get('fn')
                                 if sub_cid and sub_name:
                                     cursor.execute("""
                                         INSERT INTO p115_filesystem_cache (id, parent_id, name)
@@ -1499,11 +1536,10 @@ def task_full_sync_strm_and_subs(processor=None):
     # ==========================================
     def process_file_info(info, rel_path_parts, base_cid):
         nonlocal files_generated
-        name = info.get('name') or info.get('n', '')
+        name = info.get('fn', '')
         ext = name.split('.')[-1].lower() if '.' in name else ''
         if ext not in allowed_exts: return
-        
-        pc = info.get('pc') or info.get('pickcode')
+        pc = info.get('pc')
         if not pc: return
         
         # 获取分类前缀路径 (例如 "纪录片/BBC")
@@ -1625,14 +1661,15 @@ def task_full_sync_strm_and_subs(processor=None):
                 offset = 0
                 limit = 1000
                 while True:
+                    if processor and getattr(processor, 'is_stop_requested', lambda: False)(): return
                     res = client.fs_files({'cid': cid, 'limit': limit, 'offset': offset, 'record_open_time': 0, 'count_folders': 0})
                     data = res.get('data', [])
                     if not data: break
                     for item in data:
-                        if item.get('fid'):
+                        if str(item.get('fc')) == '1':
                             process_file_info(item, current_parts, base_cid)
-                        else:
-                            reliable_recursive_scan(item.get('cid'), current_parts + [item.get('n')])
+                        elif str(item.get('fc')) == '0':
+                            reliable_recursive_scan(item.get('fid'), current_parts + [item.get('fn')])
                     if len(data) < limit: break
                     offset += limit
             
@@ -1713,8 +1750,8 @@ def delete_115_files_by_webhook(item_path, pickcodes):
                 time.sleep(1.5) # ★ 搜索接口风控极严，必须加睡眠限流
                 res = client.fs_files({'search_value': tmdb_folder_name, 'limit': 1000, 'record_open_time': 0, 'count_folders': 0})
                 for item in res.get('data', []):
-                    if item.get('n') == tmdb_folder_name and not item.get('fid'):
-                        base_cid = item.get('cid')
+                    if item.get('fn') == tmdb_folder_name and str(item.get('fc')) == '0':
+                        base_cid = item.get('fid')
                         break
             except Exception as e:
                 logger.warning(f"  ⚠️ [联动删除] 模糊搜索目录 '{tmdb_folder_name}' 时被风控或报错: {e}")
@@ -1731,12 +1768,11 @@ def delete_115_files_by_webhook(item_path, pickcodes):
                 time.sleep(1.5) # ★ 强制防风控限流：每次请求间隔 1.5 秒
                 res = client.fs_files({'cid': cid, 'limit': 1000, 'record_open_time': 0, 'count_folders': 0})
                 for item in res.get('data', []):
-                    if item.get('fid'):
-                        # 如果文件的提取码在我们要删除的列表中
+                    if str(item.get('fc')) == '1':
                         if item.get('pc') in pickcodes:
                             fids_to_delete.append(item.get('fid'))
-                    elif item.get('cid'):
-                        scan_and_match(item.get('cid'))
+                    elif str(item.get('fc')) == '0':
+                        scan_and_match(item.get('fid'))
             except Exception as e:
                 logger.warning(f"  ⚠️ [联动删除] 扫描目录 {cid} 时被风控或报错: {e}")
 
@@ -1759,12 +1795,12 @@ def delete_115_files_by_webhook(item_path, pickcodes):
                     time.sleep(1.5) # ★ 强制防风控限流
                     res = client.fs_files({'cid': cid, 'limit': 1000, 'record_open_time': 0, 'count_folders': 0})
                     for item in res.get('data', []):
-                        if item.get('fid'):
-                            ext = str(item.get('n', '')).split('.')[-1].lower()
+                        if str(item.get('fc')) == '1':
+                            ext = str(item.get('fn', '')).split('.')[-1].lower()
                             if ext in ['mp4', 'mkv', 'avi', 'ts', 'iso']:
                                 video_count += 1
-                        elif item.get('cid'):
-                            count_videos(item.get('cid'))
+                        elif str(item.get('fc')) == '0':
+                            count_videos(item.get('fid'))
                 except Exception as e:
                     logger.warning(f"  ⚠️ [联动删除] 检查空目录 {cid} 时报错: {e}")
                     # ★ 熔断保护：如果接口报错，假装里面还有视频，绝对不执行删目录操作！

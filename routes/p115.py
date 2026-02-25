@@ -192,11 +192,24 @@ def check_qrcode_status():
     status = _check_qrcode_status()
     
     if status.get('status') == 'success':
+        # ★★★ 扫码成功后将 Token 保存到配置 ★★★
+        access_token = _qrcode_data.get('access_token')
+        if access_token:
+            try:
+                from config_manager import save_config
+                config = get_config()
+                config[constants.CONFIG_OPTION_115_TOKEN] = access_token
+                save_config(config)
+                logger.info("  ✅ [115] 扫码获取的 Token 已自动保存到配置")
+            except Exception as e:
+                logger.error(f"  ❌ 保存 Token 到配置失败: {e}")
+        
         return jsonify({
             "success": True,
             "status": "success",
             "message": "登录成功",
-            "cookies": status.get('cookies')
+            "cookies": status.get('cookies'),
+            "token": access_token  # 同时返回 Token 供前端确认
         })
     elif status.get('status') == 'expired':
         return jsonify({
@@ -242,12 +255,55 @@ class RateLimiter:
 @p115_bp.route('/status', methods=['GET'])
 @admin_required
 def get_115_status():
-    """检查 115 Cookie 状态"""
+    """检查 115 凭证状态 (分别检查 Token 和 Cookie)"""
     try:
-        # P115Service 内部已改为读取全局配置
-        from handler.p115_service import get_115_account_info
-        info = get_115_account_info()
-        return jsonify({"status": "success", "data": info})
+        from handler.p115_service import P115Service, get_config
+        config = get_config()
+        
+        token = config.get(constants.CONFIG_OPTION_115_TOKEN, "").strip()
+        cookie = config.get(constants.CONFIG_OPTION_115_COOKIES, "").strip()
+        
+        result = {
+            "has_token": bool(token),
+            "has_cookie": bool(cookie),
+            "valid": False,
+            "msg": "",
+            "user_info": None
+        }
+        
+        # 优先检查 Token
+        if token:
+            openapi_client = P115Service.get_openapi_client()
+            if openapi_client:
+                try:
+                    user_resp = openapi_client.get_user_info()
+                    if user_resp and user_resp.get('state'):
+                        result["valid"] = True
+                        result["msg"] = "Token 有效 (OpenAPI)"
+                        result["user_info"] = user_resp.get('data', {})
+                        # 如果也有 Cookie，一并提示
+                        if cookie:
+                            result["msg"] = "Token + Cookie 均已配置 (推荐)"
+                        return jsonify({"status": "success", "data": result})
+                except Exception as e:
+                    result["msg"] = f"Token 无效: {str(e)}"
+            else:
+                result["msg"] = "Token 初始化失败"
+        
+        # 如果没有 Token，检查 Cookie
+        if cookie and not result.get("user_info"):
+            cookie_client = P115Service.get_cookie_client()
+            if cookie_client:
+                result["valid"] = True
+                result["msg"] = "仅配置 Cookie (播放专用)"
+                return jsonify({"status": "success", "data": result})
+            else:
+                result["msg"] = "Cookie 无效或 p115client 未安装"
+        
+        if not token and not cookie:
+            result["msg"] = "未配置任何凭证"
+            
+        return jsonify({"status": "success", "data": result})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -257,11 +313,7 @@ def list_115_directories():
     """获取 115 目录列表"""
     client = P115Service.get_client()
     if not client:
-        return jsonify({"status": "error", "message": "无法初始化 115 客户端，请检查 Cookies"}), 500
-        
-    # 二次检查 Cookies 是否存在 (虽然 get_client 已经检查过了)
-    if not P115Service.get_cookies():
-        return jsonify({"success": False, "message": "未配置 Cookies (请在通用设置 -> 115网盘 中配置)"}), 400
+        return jsonify({"status": "error", "message": "无法初始化 115 客户端，请检查凭证"}), 500
 
     try:
         cid = int(request.args.get('cid', 0))
@@ -269,44 +321,49 @@ def list_115_directories():
         cid = 0
     
     try:
-        # nf=1: 只返回文件夹, file_type=0: 文件夹类型
-        resp = client.fs_files({
-            'cid': cid, 
-            'limit': 1000, 
-            'asc': 1, 
-            'o': 'file_name',
-            'nf': 1,
-            'file_type': 0
-        })
+        # ★★★ 魔法日志：记录官方API原始请求参数 ★★★
+        request_payload = {'cid': cid, 'limit': 1000}
+        logger.info(f"  📂 [115目录] 请求参数: {request_payload}")
         
-        logger.info(f"  📂 [115目录] 请求 cid={cid}, 响应: {resp.get('state')}, 数据条数: {len(resp.get('data', []))}")
+        resp = client.fs_files(request_payload)
+        
+        # ★★★ 魔法日志：记录官方API完整原始返回 ★★★
+        logger.info(f"  📂 [115目录] 原始响应: {json.dumps(resp, ensure_ascii=False, indent=2)}")
         
         if not resp.get('state'):
             return jsonify({"success": False, "message": resp.get('error_msg', '获取失败')}), 500
             
         data = resp.get('data', [])
+        
+        # ★★★ 魔法日志：记录返回的data数组长度和前几条数据结构 ★★★
+        logger.info(f"  📂 [115目录] data数组长度: {len(data)}")
+        if data:
+            logger.info(f"  📂 [115目录] 第一条数据结构: {json.dumps(data[0], ensure_ascii=False)}")
+            # 列出所有可能的字段名
+            all_keys = set()
+            for item in data[:5]:
+                all_keys.update(item.keys())
+            logger.info(f"  📂 [115目录] data中的字段列表: {sorted(all_keys)}")
+        
         dirs = []
         
         for item in data:
-            # ★★★ 关键修复：115 OpenAPI 中，文件夹也有 fid！
-            # 用 fc 字段判断：fc='0' 表示文件夹，fc='1' 表示文件
-            fc = item.get('fc')
-            is_folder = (fc == '0' or fc == 0)
-            
-            if is_folder:
-                # 文件夹：cid 就是 fid
-                cid_val = item.get('cid') or item.get('fid')
+            # 官方文档：fc='0' 代表文件夹
+            if str(item.get('fc')) == '0':
                 dirs.append({
-                    "id": str(cid_val) if cid_val else None,
-                    "name": item.get('n'),
+                    "id": str(item.get('fid')),
+                    "name": item.get('fn'),
                     "parent_id": item.get('pid')
                 })
         
-        logger.info(f"  📂 [115目录] 找到 {len(dirs)} 个子目录")
-        
         current_name = '根目录'
         if cid != 0 and resp.get('path'):
-            current_name = resp.get('path')[-1].get('name', '未知目录')
+            # path 数组中官方返回的是 file_name
+            current_name = resp.get('path')[-1].get('file_name') or resp.get('path')[-1].get('fn', '未知目录')
+        
+        # ★★★ 魔法日志：记录解析后的目录列表 ★★★
+        logger.info(f"  📂 [115目录] 解析出的目录数: {len(dirs)}")
+        logger.info(f"  📂 [115目录] 解析出的目录列表: {json.dumps(dirs, ensure_ascii=False)}")
                 
         return jsonify({
             "success": True, 
@@ -318,6 +375,7 @@ def list_115_directories():
         })
         
     except Exception as e:
+        logger.error(f"  ❌ [115目录] 获取目录异常: {e}", exc_info=True)
         return jsonify({"success": False, "message": str(e)}), 500
 
 @p115_bp.route('/mkdir', methods=['POST'])
@@ -408,9 +466,8 @@ def handle_sorting_rules():
                                     break
                         
                         if found_root and start_idx < len(path_nodes):
-                            # 提取中间所有层级，例如: ['电影', '欧美电影']
-                            rel_segments = [str(n.get('name')).strip() for n in path_nodes[start_idx:]]
-                            # 强制使用 '/' 拼接，保证跨平台兼容性
+                            # 官方文档：paths 数组里返回的是 file_name
+                            rel_segments = [str(n.get('file_name') or n.get('fn')).strip() for n in path_nodes[start_idx:]]
                             rule['category_path'] = "/".join(rel_segments)
                         else:
                             # 兜底：如果层级异常或没找到根目录，用规则里配的名称

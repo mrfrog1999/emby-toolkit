@@ -42,10 +42,11 @@ CONFIG_OPTION_MONITOR_EXCLUDE_REFRESH_DELAY = "monitor_exclude_refresh_delay"
 DEFAULT_MONITOR_EXCLUDE_REFRESH_DELAY = 0 # 默认不延迟
 
 # ==============================================================================
-# ✨ 115 网盘配置 (115 Cloud Drive) - ★★★ 新增 ★★★
+# ✨ 115 网盘配置 (115 Cloud Drive) - ★★★ 重构分离 ★★★
 # ==============================================================================
 CONFIG_SECTION_115 = "115"
-CONFIG_OPTION_115_COOKIES = "p115_cookies"
+CONFIG_OPTION_115_TOKEN = "p115_token"           # 115 Access Token (用于OpenAPI管理操作: 扫描/创建目录/移动文件)
+CONFIG_OPTION_115_COOKIES = "p115_cookies"       # 115 Cookie (用于播放: 获取直链)
 CONFIG_OPTION_115_SAVE_PATH_CID = "p115_save_path_cid"
 CONFIG_OPTION_115_SAVE_PATH_NAME = "p115_save_path_name"
 CONFIG_OPTION_115_MEDIA_ROOT_NAME = "p115_media_root_name"     # 网盘媒体库根目录名称
