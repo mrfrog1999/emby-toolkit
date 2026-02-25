@@ -491,7 +491,7 @@ def _get_cached_115_url(pick_code, user_agent, client_ip=None):
     client = P115Service.get_client()
     if not client: 
         # 客户端未初始化，防刷缓存 10 秒
-        _url_cache[cache_key] = {"url": None, "expire_at": now + 10}
+        _url_cache[cache_key] = {"url": None, "name": pick_code, "expire_at": now + 10}
         return None
     
     # 使用锁：即使缓存失效，多个请求同时进来，也只有一个能去查 115 API
@@ -501,7 +501,9 @@ def _get_cached_115_url(pick_code, user_agent, client_ip=None):
         if cache_key in _url_cache and now < _url_cache[cache_key]["expire_at"]:
             cached_url = _url_cache[cache_key]["url"]
             if cached_url:
-                logger.info(f"  📥 [115直链] 命中缓存: {pick_code[:8]}...")
+                # 从缓存中取出之前解析好的文件名
+                display_name = _url_cache[cache_key].get("name", pick_code[:8] + "...")
+                logger.info(f"  📥 [115直链] 命中缓存: {display_name}")
                 return cached_url
         
         # 这里的限流逻辑：如果令牌不足，直接等待或返回
@@ -519,19 +521,40 @@ def _get_cached_115_url(pick_code, user_agent, client_ip=None):
             if url_obj:
                 # download_url 现在返回直链字符串
                 direct_url = str(url_obj)
-                # 首次获取日志
-                logger.info(f"  🎬 [115直链] 获取成功: {pick_code[:8]}...")
-                # 存入缓存，115 直链通常几小时失效，这里设置缓存 2 小时 (7200秒)
-                _url_cache[cache_key] = {"url": direct_url, "expire_at": now + 7200}
+                
+                # ★★★ 尝试从直链中提取真实文件名用于日志展示 ★★★
+                display_name = pick_code[:8] + "..."
+                try:
+                    from urllib.parse import urlparse, parse_qs, unquote
+                    parsed = urlparse(direct_url)
+                    qs = parse_qs(parsed.query)
+                    # 115 的直链通常把文件名放在 file 或 filename 参数里
+                    if 'file' in qs:
+                        display_name = unquote(qs['file'][0])
+                    elif 'filename' in qs:
+                        display_name = unquote(qs['filename'][0])
+                    else:
+                        # 兜底：尝试从 URL 路径最后一段提取
+                        path_name = unquote(os.path.basename(parsed.path))
+                        if path_name:
+                            display_name = path_name
+                except:
+                    pass
+
+                # 首次获取日志，打印真实文件名
+                logger.info(f"  🎬 [115直链] 获取成功: {display_name}")
+                
+                # 存入缓存，把解析出的文件名也存进去，方便下次命中缓存时打印
+                _url_cache[cache_key] = {"url": direct_url, "name": display_name, "expire_at": now + 7200}
                 return direct_url
             else:
                 # 获取失败，存入短期负面缓存 (10秒)，防止播放器疯狂重试导致 115 封号
-                _url_cache[cache_key] = {"url": None, "expire_at": now + 10}
+                _url_cache[cache_key] = {"url": None, "name": pick_code, "expire_at": now + 10}
                 return None
         except Exception as e:
             logger.error(f"  ❌ 获取 115 直链 API 报错: {e}")
             # 异常也存入短期负面缓存 (10秒)
-            _url_cache[cache_key] = {"url": None, "expire_at": now + 10}
+            _url_cache[cache_key] = {"url": None, "name": pick_code, "expire_at": now + 10}
             return None
 
 # 保留原来的 lru_cache 装饰器作为备用（用于 play_115_video 直接调用）
