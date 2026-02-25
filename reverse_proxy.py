@@ -898,44 +898,41 @@ def proxy_all(path):
                 if resp.status_code == 200 and 'application/json' in resp.headers.get('Content-Type', ''):
                     data = resp.json()
                     modified = False
-                        
-                    for source in data.get('MediaSources', []):
-                        strm_url = source.get('Path', '')
-                        if isinstance(strm_url, str) and '/api/p115/play/' in strm_url:
-                            pick_code = strm_url.split('/play/')[-1].split('?')[0].strip()
-                            
-                            player_ua = request.headers.get('User-Agent', 'Mozilla/5.0')
-                            client_ip = request.headers.get('X-Real-IP', request.remote_addr)
-                            real_115_cdn_url = _get_cached_115_url(pick_code, player_ua, client_ip)
-                            
-                            if real_115_cdn_url:
-                                # 【修复核心】严格区分浏览器和本地客户端
-                                is_browser = 'mozilla' in user_agent or 'chrome' in user_agent or 'safari' in user_agent
+                    
+                    # 【修复核心】先判断是否为浏览器，再决定是否获取115直链
+                    is_browser = 'mozilla' in user_agent or 'chrome' in user_agent or 'safari' in user_agent
+                    
+                    # 排除已知的本地播放器 (它们伪装了 UA，但可以通过 Client 或特定关键字识别)
+                    native_clients = ['androidtv', 'infuse', 'emby for ios', 'emby for android', 'emby theater', 'senplayer']
+                    if any(nc in client_name for nc in native_clients) or 'infuse' in user_agent or 'dalvik' in user_agent:
+                        is_browser = False
+                    
+                    # logger.info(f"  🔍 客户端名称: {client_name}, User-Agent: {user_agent[:50]}, 是否浏览器: {is_browser}")
+                    
+                    # 只有非浏览器才获取115直链
+                    if not is_browser:
+                        for source in data.get('MediaSources', []):
+                            strm_url = source.get('Path', '')
+                            if isinstance(strm_url, str) and '/api/p115/play/' in strm_url:
+                                pick_code = strm_url.split('/play/')[-1].split('?')[0].strip()
                                 
-                                # 排除已知的本地播放器 (它们伪装了 UA，但可以通过 Client 或特定关键字识别)
-                                native_clients = ['androidtv', 'infuse', 'emby for ios', 'emby for android', 'emby theater', 'senplayer']
-                                if any(nc in client_name for nc in native_clients) or 'infuse' in user_agent or 'dalvik' in user_agent:
-                                    is_browser = False
+                                player_ua = request.headers.get('User-Agent', 'Mozilla/5.0')
+                                client_ip = request.headers.get('X-Real-IP', request.remote_addr)
+                                real_115_cdn_url = _get_cached_115_url(pick_code, player_ua, client_ip)
                                 
-                                # logger.info(f"  🔍 客户端名称: {client_name}, User-Agent: {user_agent[:50]}, 是否浏览器: {is_browser}")
-                                
-                                if is_browser:
-                                    # 浏览器直接转发给 Emby 服务端处理，不做劫持（115 直链存在跨域问题）
-                                    # logger.info(f"  ⏭️ 浏览器，直接转发给 Emby 服务端，不做302重定向")
-                                    pass
-                                else:
-                                    # 对于 Android TV, Infuse 等本地客户端进行劫持
-                                    # 保持 Emby 原生的 .strm 逻辑，让客户端自己去请求流，然后我们在上面的拦截 H 处给它 302 重定向。
-                                    source['RemoteUrl'] = real_115_cdn_url
-                                    source['Path'] = real_115_cdn_url
-                                    source['IsRemote'] = True
-                                    source.pop('TranscodingUrl', None) 
-                                    source['Protocol'] = 'Http'
-                                    source['SupportsDirectPlay'] = True
-                                    source['SupportsDirectStream'] = True
-                                    source['SupportsTranscoding'] = False
-                                    # logger.info(f"  ✅ [PlaybackInfo] 识别为本地客户端，已注入 115 直链")
-                                    modified = True
+                                # 只有非浏览器（本地客户端如 Android TV, Infuse 等）才进行劫持
+                                # 保持 Emby 原生的 .strm 逻辑，让客户端自己去请求流，然后我们在上面的拦截 H 处给它 302 重定向。
+                                source['RemoteUrl'] = real_115_cdn_url
+                                source['Path'] = real_115_cdn_url
+                                source['IsRemote'] = True
+                                source.pop('TranscodingUrl', None)
+                                source['Protocol'] = 'Http'
+                                source['SupportsDirectPlay'] = True
+                                source['SupportsDirectStream'] = True
+                                source['SupportsTranscoding'] = False
+                                # logger.info(f"  ✅ [PlaybackInfo] 识别为本地客户端，已注入 115 直链")
+                                modified = True
+                    # else: 浏览器直接跳过，不获取115直链
                             
                     if modified:
                         return Response(json.dumps(data), status=200, mimetype='application/json')
