@@ -520,7 +520,7 @@ def _get_cached_115_url(pick_code, user_agent, client_ip=None):
                 # download_url 现在返回直链字符串
                 direct_url = str(url_obj)
                 # 首次获取日志
-                logger.info(f"  🎬 [115直链] 获取成功: {url_obj.name}")
+                logger.info(f"  🎬 [115直链] 获取成功: {pick_code[:8]}...")
                 # 存入缓存，115 直链通常几小时失效，这里设置缓存 2 小时 (7200秒)
                 _url_cache[cache_key] = {"url": direct_url, "expire_at": now + 7200}
                 return direct_url
