@@ -673,75 +673,50 @@ class SmartOrganizer:
         return " · ".join(info_tags) if info_tags else ""
 
     def _rename_file_node(self, file_node, new_base_name, year=None, is_tv=False):
-        """
-        重命名单个文件节点
-        修复：字幕文件先剥离语言标签，再提取Tags，确保能识别到被语言标签挡住的发布组。
-        """
-        original_name = file_node.get('fn', '')
+        # 兼容 OpenAPI 键名
+        original_name = file_node.get('fn') or file_node.get('n') or file_node.get('file_name', '')
         if '.' not in original_name: return original_name, None
 
-        # 分离文件名和扩展名
         parts = original_name.rsplit('.', 1)
         name_body = parts[0]
         ext = parts[1].lower()
 
         is_sub = ext in ['srt', 'ass', 'ssa', 'sub', 'vtt', 'sup']
-
-        # -------------------------------------------------
-        # 1. 优先计算字幕语言后缀 (为了后续剥离它)
-        # -------------------------------------------------
         lang_suffix = ""
         if is_sub:
-            # 常见语言代码白名单
             lang_keywords = [
                 'zh', 'cn', 'tw', 'hk', 'en', 'jp', 'kr',
                 'chs', 'cht', 'eng', 'jpn', 'kor', 'fre', 'spa',
                 'default', 'forced', 'tc', 'sc'
             ]
-
-            # 策略A: 检查文件名最后一段 (Movie.chs.srt)
             sub_parts = name_body.split('.')
             if len(sub_parts) > 1:
                 last_part = sub_parts[-1].lower()
                 if last_part in lang_keywords or '-' in last_part:
-                    lang_suffix = f".{sub_parts[-1]}" # 保持原大小写
+                    lang_suffix = f".{sub_parts[-1]}"
 
-            # 策略B: 正则搜索
             if not lang_suffix:
                 match = re.search(r'(?:\.|-|_|\s)(chs|cht|zh-cn|zh-tw|eng|jpn|kor|tc|sc)(?:\.|-|_|$)', name_body, re.IGNORECASE)
                 if match:
                     lang_suffix = f".{match.group(1)}"
 
-        # -------------------------------------------------
-        # 2. 提取 Tags (关键修复步骤)
-        # -------------------------------------------------
         tag_suffix = ""
         try:
-            # 构造用于提取信息的“搜索名”
             search_name = original_name
-
             if is_sub:
-                # 如果是字幕，把语言后缀和扩展名都去掉，伪装成纯视频文件名
                 if lang_suffix and name_body.endswith(lang_suffix):
-                    # 去掉 .zh
                     clean_body = name_body[:-len(lang_suffix)]
-                    search_name = f"{clean_body}.mkv" # 补个假后缀防报错
+                    search_name = f"{clean_body}.mkv"
                 else:
-                    # 如果没找到标准后缀，直接用 name_body
                     search_name = f"{name_body}.mkv"
 
             video_info = self._extract_video_info(search_name)
             if video_info:
                 tag_suffix = f" · {video_info}"
         except Exception as e:
-            # logger.debug(f"Tags提取失败: {e}")
             pass
 
-        # -------------------------------------------------
-        # 3. 构建新文件名
-        # -------------------------------------------------
         if is_tv:
-            # === 剧集模式 ===
             pattern = r'(?:s|S)(\d{1,2})(?:e|E)(\d{1,2})|Ep?(\d{1,2})|第(\d{1,3})[集话]'
             match = re.search(pattern, original_name)
             if match:
@@ -752,18 +727,13 @@ class SmartOrganizer:
                 s_str = f"S{season_num:02d}"
                 e_str = f"E{episode_num:02d}"
 
-                # 格式：Title - S01E01 · Tags[.Lang].ext
                 new_name = f"{new_base_name} - {s_str}{e_str}{tag_suffix}{lang_suffix}.{ext}"
                 return new_name, season_num
             else:
                 return original_name, None
         else:
-            # === 电影模式 ===
             movie_base = f"{new_base_name} ({year})" if year else new_base_name
-
-            # 格式：Title (Year) · Tags[.Lang].ext
             new_name = f"{movie_base}{tag_suffix}{lang_suffix}.{ext}"
-
             return new_name, None
 
     def _scan_files_recursively(self, cid, depth=0, max_depth=3):
@@ -774,11 +744,13 @@ class SmartOrganizer:
             res = self.client.fs_files({'cid': cid, 'limit': 1000, 'record_open_time': 0, 'count_folders': 0})
             if res.get('data'):
                 for item in res['data']:
-                    # 官方文档：fc=1 是文件，fc=0 是文件夹
-                    if str(item.get('fc')) == '1':
+                    # 兼容 OpenAPI 键名
+                    fc_val = item.get('fc') if item.get('fc') is not None else item.get('type')
+                    if str(fc_val) == '1':
                         all_files.append(item)
-                    elif str(item.get('fc')) == '0':
-                        sub_files = self._scan_files_recursively(item.get('fid'), depth + 1, max_depth)
+                    elif str(fc_val) == '0':
+                        sub_id = item.get('fid') or item.get('file_id')
+                        sub_files = self._scan_files_recursively(sub_id, depth + 1, max_depth)
                         all_files.extend(sub_files)
         except Exception as e:
             logger.warning(f"  ⚠️ 扫描目录出错 (CID: {cid}): {e}")
@@ -813,10 +785,6 @@ class SmartOrganizer:
         return False
 
     def execute(self, root_item, target_cid, delete_source=True):
-        """
-        执行整理：先尝试创建，失败后再查找（高效率模式），且一步到位移动
-        """
-        # 1. 准备标准名称
         title = self.details.get('title') or self.original_title
         date_str = self.details.get('date') or ''
         year = date_str[:4] if date_str else ''
@@ -824,9 +792,12 @@ class SmartOrganizer:
         safe_title = re.sub(r'[\\/:*?"<>|]', '', title).strip()
         std_root_name = f"{safe_title} ({year}) {{tmdb={self.tmdb_id}}}" if year else f"{safe_title} {{tmdb={self.tmdb_id}}}"
 
-        source_root_id = root_item.get('fid')
-        is_source_file = str(root_item.get('fc')) == '1'
-        dest_parent_cid = target_cid if (target_cid and str(target_cid) != '0') else root_item.get('pid')
+        # 兼容 OpenAPI 键名
+        root_name = root_item.get('fn') or root_item.get('n') or root_item.get('file_name', '未知')
+        source_root_id = root_item.get('fid') or root_item.get('file_id')
+        fc_val = root_item.get('fc') if root_item.get('fc') is not None else root_item.get('type')
+        is_source_file = str(fc_val) == '1'
+        dest_parent_cid = target_cid if (target_cid and str(target_cid) != '0') else (root_item.get('pid') or root_item.get('parent_id') or root_item.get('cid'))
 
         config = get_config()
         configured_exts = config.get(constants.CONFIG_OPTION_115_EXTENSIONS, [])
@@ -834,37 +805,33 @@ class SmartOrganizer:
         known_video_exts = {'mp4', 'mkv', 'avi', 'ts', 'iso', 'rmvb', 'wmv', 'mov', 'm2ts', 'flv', 'mpg'}
         MIN_VIDEO_SIZE = 10 * 1024 * 1024
 
-        logger.info(f"  🚀 [115] 开始整理: {root_item.get('fn')} -> {std_root_name}")
+        logger.info(f"  🚀 [115] 开始整理: {root_name} -> {std_root_name}")
 
-        # ==================================================
-        # 步骤 A: 获取主目录 CID (★ 纯净增强版：先DB -> 再创建 -> 搜索 -> 暴力翻页)
-        # ==================================================
         final_home_cid = P115CacheManager.get_cid(dest_parent_cid, std_root_name)
 
         if final_home_cid:
             logger.info(f"  ⚡ [缓存命中] 主目录: {std_root_name}")
         else:
-            # 1. 缓存没命中，直接尝试创建
             mk_res = self.client.fs_mkdir(std_root_name, dest_parent_cid)
             if mk_res.get('state'):
                 final_home_cid = mk_res.get('cid')
                 P115CacheManager.save_cid(final_home_cid, dest_parent_cid, std_root_name)
                 logger.info(f"  🆕 创建新主目录并缓存: {std_root_name}")
             else:
-                # 2. 创建失败（目录已存在），尝试使用 115 的 search_value
                 try:
                     search_res = self.client.fs_files({'cid': dest_parent_cid, 'search_value': std_root_name, 'limit': 1150, 'record_open_time': 0, 'count_folders': 0})
                     if search_res.get('data'):
                         for item in search_res['data']:
-                            if item.get('fn') == std_root_name and str(item.get('fc')) == '0':
-                                final_home_cid = item.get('fid')
-                                P115CacheManager.save_cid(final_home_cid, dest_parent_cid, std_root_name) # ★ 只在这里存
+                            item_name = item.get('fn') or item.get('n') or item.get('file_name')
+                            item_fc = item.get('fc') if item.get('fc') is not None else item.get('type')
+                            if item_name == std_root_name and str(item_fc) == '0':
+                                final_home_cid = item.get('fid') or item.get('file_id')
+                                P115CacheManager.save_cid(final_home_cid, dest_parent_cid, std_root_name)
                                 logger.info(f"  📂 成功查找到已存在主目录并永久缓存: {std_root_name}")
                                 break
                 except Exception as e:
                     logger.warning(f"  ⚠️ 115模糊查找异常: {e}")
 
-                # 3. ★★★ 终极暴力兜底 ★★★：如果搜索真瞎了，手工翻页遍历找！
                 if not final_home_cid:
                     logger.warning(f"  ⚠️ 115搜索失效，启动全量遍历查找老目录: '{std_root_name}' ...")
                     offset = 0
@@ -873,18 +840,19 @@ class SmartOrganizer:
                         try:
                             res = self.client.fs_files({'cid': dest_parent_cid, 'limit': limit, 'offset': offset, 'type': 0, 'record_open_time': 0, 'count_folders': 0})
                             data = res.get('data', [])
-                            if not data: break # 翻到底了
+                            if not data: break 
                             
                             for item in data:
-                                if item.get('fn') == std_root_name and str(item.get('fc')) == '0':
-                                    final_home_cid = item.get('fid')
-                                    P115CacheManager.save_cid(final_home_cid, dest_parent_cid, std_root_name) # ★ 只在这里存
+                                item_name = item.get('fn') or item.get('n') or item.get('file_name')
+                                item_fc = item.get('fc') if item.get('fc') is not None else item.get('type')
+                                if item_name == std_root_name and str(item_fc) == '0':
+                                    final_home_cid = item.get('fid') or item.get('file_id')
+                                    P115CacheManager.save_cid(final_home_cid, dest_parent_cid, std_root_name)
                                     logger.info(f"  📂 成功查找到已存在主目录并永久缓存: {std_root_name}")
                                     break
                                     
-                            if final_home_cid: break # 找到了
-                            
-                            offset += limit # 准备查下一页
+                            if final_home_cid: break 
+                            offset += limit 
                         except Exception as e:
                             logger.error(f"遍历查找失败: {e}")
                             break
@@ -893,9 +861,6 @@ class SmartOrganizer:
             logger.error(f"  ❌ 无法获取或创建目标目录 (已尝试所有手段)")
             return False
 
-        # ==================================================
-        # 步骤 B: 扫描源文件
-        # ==================================================
         candidates = []
         if is_source_file:
             candidates.append(root_item)
@@ -904,47 +869,42 @@ class SmartOrganizer:
 
         if not candidates: return True
 
-        # ==================================================
-        # 步骤 C: 处理文件
-        # ==================================================
         moved_count = 0
         for file_item in candidates:
-            fid = file_item.get('fid')
-            file_name = file_item.get('fn', '')
+            # 兼容 OpenAPI 键名
+            fid = file_item.get('fid') or file_item.get('file_id')
+            file_name = file_item.get('fn') or file_item.get('n') or file_item.get('file_name', '')
             ext = file_name.split('.')[-1].lower() if '.' in file_name else ''
             if self._is_junk_file(file_name): continue
             if ext not in allowed_exts: continue
             
-            file_size = _parse_115_size(file_item.get('fs'))
+            file_size = _parse_115_size(file_item.get('fs') or file_item.get('size'))
             if ext in known_video_exts and 0 < file_size < MIN_VIDEO_SIZE: continue
 
-            # 1. 重命名计算
             new_filename, season_num = self._rename_file_node(
                 file_item, safe_title, year=year, is_tv=(self.media_type=='tv')
             )
 
-            # 2. 提前确定最终目的地（季目录：先创建后查找逻辑）
             real_target_cid = final_home_cid
             if self.media_type == 'tv' and season_num is not None:
                 s_name = f"Season {season_num:02d}"
-                
-                # ★ 改用 DB 缓存
                 s_cid = P115CacheManager.get_cid(final_home_cid, s_name)
                 
                 if s_cid:
                     logger.info(f"  ⚡ [缓存命中] 季目录: {std_root_name} - {s_name}")
                     real_target_cid = s_cid
                 else:
-                    # 尝试创建
                     s_mk = self.client.fs_mkdir(s_name, final_home_cid)
                     s_cid = s_mk.get('cid') if s_mk.get('state') else None
                     
-                    if not s_cid: # 创建失败，查找
+                    if not s_cid: 
                         try:
                             s_search = self.client.fs_files({'cid': final_home_cid, 'search_value': s_name, 'limit': 1150, 'record_open_time': 0, 'count_folders': 0})
                             for item in s_search.get('data', []):
-                                if item.get('fn') == s_name and str(item.get('fc')) == '0':
-                                    s_cid = item.get('fid')
+                                item_name = item.get('fn') or item.get('n') or item.get('file_name')
+                                item_fc = item.get('fc') if item.get('fc') is not None else item.get('type')
+                                if item_name == s_name and str(item_fc) == '0':
+                                    s_cid = item.get('fid') or item.get('file_id')
                                     break
                         except: pass
                     
@@ -953,12 +913,10 @@ class SmartOrganizer:
                         logger.info(f"  🆕 创建季目录并缓存: {std_root_name} - {s_name}")
                         real_target_cid = s_cid
 
-            # 3. 先改名
             if new_filename != file_name:
                 if self.client.fs_rename((fid, new_filename)).get('state'):
                     logger.info(f"  ✏️ [重命名] {file_name} -> {new_filename}")
 
-            # 4. 一步到位移动到目的地
             if self.client.fs_move(fid, real_target_cid).get('state'):
                 if self.media_type == 'tv' and season_num is not None:
                     logger.info(f"  📁 [移动] {file_name} -> {std_root_name} - {s_name}")
@@ -966,16 +924,13 @@ class SmartOrganizer:
                     logger.info(f"  📁 [移动] {file_name} -> {std_root_name}")
                 moved_count += 1
 
-                # ==================================================
-                # ★★★ 终极形态：同步生成本地 .strm 直链文件 ★★★
-                # ==================================================
-                pick_code = file_item.get('pc')  # 115 文件的提取码
+                # 兼容 OpenAPI 键名
+                pick_code = file_item.get('pc') or file_item.get('pick_code')
                 local_root = config.get(constants.CONFIG_OPTION_LOCAL_STRM_ROOT)
                 etk_url = config.get(constants.CONFIG_OPTION_ETK_SERVER_URL, "http://127.0.0.1:5257").rstrip('/')
                 
                 if pick_code and local_root and os.path.exists(local_root):
                     try:
-                        # 1. 获取当前匹配到的分类目录名 (如 "欧美电影")
                         category_name = None
                         for rule in self.rules:
                             if rule.get('cid') == str(target_cid):
@@ -983,32 +938,26 @@ class SmartOrganizer:
                                 break
                         if not category_name: category_name = "未识别"
 
-                        # ★★★ 直接从规则中获取已保存的分类路径，避免调用115 API ★★★
                         category_rule = next((r for r in self.rules if str(r.get('cid')) == str(target_cid)), None)
                         
-                        # ★ 修复：使用 'category_path' in category_rule，防止空字符串 "" 被判定为 False
                         if category_rule and 'category_path' in category_rule:
                             relative_category_path = category_rule['category_path']
                             logger.debug(f"  ⚡ [规则缓存] 分类路径: '{relative_category_path}'")
                         else:
-                            # 兜底：使用规则里配的名称
                             relative_category_path = category_rule.get('dir_name', '未识别') if category_rule else "未识别"
 
-                        # 2. 拼接本地绝对路径 (现在它和 115 网盘的层级 100% 对应了！)
                         if self.media_type == 'tv' and season_num is not None:
                             local_dir = os.path.join(local_root, relative_category_path, std_root_name, s_name)
                         else:
                             local_dir = os.path.join(local_root, relative_category_path, std_root_name)
                         
-                        os.makedirs(local_dir, exist_ok=True) # 自动创建本地文件夹结构
+                        os.makedirs(local_dir, exist_ok=True) 
 
-                        # 3. 构造 strm 文件名和直链内容
                         ext = new_filename.split('.')[-1].lower() if '.' in new_filename else ''
                         is_video = ext in known_video_exts
                         is_sub = ext in ['srt', 'ass', 'ssa', 'sub', 'vtt', 'sup']
 
                         if is_video:
-                            # 处理视频 -> 生成 1KB 的 .strm 文件
                             strm_filename = os.path.splitext(new_filename)[0] + ".strm"
                             strm_filepath = os.path.join(local_dir, strm_filename)
                             strm_content = f"{etk_url}/api/p115/play/{pick_code}"
@@ -1018,19 +967,15 @@ class SmartOrganizer:
                             logger.info(f"  📝 STRM 已生成 -> {strm_filename}")
                             
                         elif is_sub:
-                            # 检查是否开启了字幕下载开关
                             if config.get(constants.CONFIG_OPTION_115_DOWNLOAD_SUBS, True):
-                                # 处理字幕 -> 真实下载到本地供 Emby 挂载
                                 sub_filepath = os.path.join(local_dir, new_filename)
                                 if not os.path.exists(sub_filepath):
                                     try:
                                         logger.info(f"  ⬇️ [字幕下载] 正在向 115 拉取外挂字幕: {new_filename} ...")
-                                        # 索取直链
                                         url_obj = self.client.download_url(pick_code, user_agent="Mozilla/5.0")
                                         dl_url = str(url_obj)
                                         if dl_url:
                                             import requests
-                                            # ★ 修复 403：必须带上伪装的 UA 和 115 的 Cookie
                                             headers = {
                                                 "User-Agent": "Mozilla/5.0",
                                                 "Cookie": self.get_cookies()
@@ -1047,9 +992,6 @@ class SmartOrganizer:
                     except Exception as e:
                         logger.error(f"  ❌ 生成 STRM 文件失败: {e}", exc_info=True)
 
-        # ==================================================
-        # 步骤 D: 清理源目录
-        # ==================================================
         if delete_source and not is_source_file and moved_count > 0:
             self.client.fs_delete([source_root_id])
             logger.info(f"  🧹 已清理空目录")
@@ -1288,10 +1230,12 @@ def task_scan_and_organize_115(processor=None):
         moved_to_unidentified = 0
 
         for item in res['data']:
-            name = item.get('fn')
+            # 兼容 OpenAPI 键名
+            name = item.get('fn') or item.get('n') or item.get('file_name')
             if not name: continue
-            item_id = item.get('fid')
-            is_folder = str(item.get('fc')) == '0'
+            item_id = item.get('fid') or item.get('file_id')
+            fc_val = item.get('fc') if item.get('fc') is not None else item.get('type')
+            is_folder = str(fc_val) == '0'
 
             if str(item_id) == str(unidentified_cid) or name == unidentified_folder_name:
                 continue
@@ -1441,9 +1385,11 @@ def task_sync_115_directory_tree(processor=None):
                 with get_db_connection() as conn:
                     with conn.cursor() as cursor:
                         for item in data:
-                            if str(item.get('fc')) == '0':
-                                sub_cid = item.get('fid')
-                                sub_name = item.get('fn')
+                            # 兼容 OpenAPI 键名
+                            fc_val = item.get('fc') if item.get('fc') is not None else item.get('type')
+                            if str(fc_val) == '0':
+                                sub_cid = item.get('fid') or item.get('file_id')
+                                sub_name = item.get('fn') or item.get('n') or item.get('file_name')
                                 if sub_cid and sub_name:
                                     cursor.execute("""
                                         INSERT INTO p115_filesystem_cache (id, parent_id, name)
@@ -1536,10 +1482,11 @@ def task_full_sync_strm_and_subs(processor=None):
     # ==========================================
     def process_file_info(info, rel_path_parts, base_cid):
         nonlocal files_generated
-        name = info.get('fn', '')
+        # 兼容 OpenAPI 键名
+        name = info.get('fn') or info.get('n') or info.get('file_name', '')
         ext = name.split('.')[-1].lower() if '.' in name else ''
         if ext not in allowed_exts: return
-        pc = info.get('pc')
+        pc = info.get('pc') or info.get('pick_code')
         if not pc: return
         
         # 获取分类前缀路径 (例如 "纪录片/BBC")

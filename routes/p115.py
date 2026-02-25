@@ -283,7 +283,7 @@ def get_115_status():
                         result["user_info"] = user_resp.get('data', {})
                         # 如果也有 Cookie，一并提示
                         if cookie:
-                            result["msg"] = "Token + Cookie 均已配置 (推荐)"
+                            result["msg"] = "Token + Cookie 均已配置"
                         return jsonify({"status": "success", "data": result})
                 except Exception as e:
                     result["msg"] = f"Token 无效: {str(e)}"
@@ -321,29 +321,14 @@ def list_115_directories():
         cid = 0
     
     try:
-        # ★★★ 魔法日志：记录官方API原始请求参数 ★★★
         request_payload = {'cid': cid, 'limit': 1000}
-        logger.info(f"  📂 [115目录] 请求参数: {request_payload}")
         
         resp = client.fs_files(request_payload)
-        
-        # ★★★ 魔法日志：记录官方API完整原始返回 ★★★
-        logger.info(f"  📂 [115目录] 原始响应: {json.dumps(resp, ensure_ascii=False, indent=2)}")
         
         if not resp.get('state'):
             return jsonify({"success": False, "message": resp.get('error_msg', '获取失败')}), 500
             
         data = resp.get('data', [])
-        
-        # ★★★ 魔法日志：记录返回的data数组长度和前几条数据结构 ★★★
-        logger.info(f"  📂 [115目录] data数组长度: {len(data)}")
-        if data:
-            logger.info(f"  📂 [115目录] 第一条数据结构: {json.dumps(data[0], ensure_ascii=False)}")
-            # 列出所有可能的字段名
-            all_keys = set()
-            for item in data[:5]:
-                all_keys.update(item.keys())
-            logger.info(f"  📂 [115目录] data中的字段列表: {sorted(all_keys)}")
         
         dirs = []
         
@@ -360,10 +345,6 @@ def list_115_directories():
         if cid != 0 and resp.get('path'):
             # path 数组中官方返回的是 file_name
             current_name = resp.get('path')[-1].get('file_name') or resp.get('path')[-1].get('fn', '未知目录')
-        
-        # ★★★ 魔法日志：记录解析后的目录列表 ★★★
-        logger.info(f"  📂 [115目录] 解析出的目录数: {len(dirs)}")
-        logger.info(f"  📂 [115目录] 解析出的目录列表: {json.dumps(dirs, ensure_ascii=False)}")
                 
         return jsonify({
             "success": True, 

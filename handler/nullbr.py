@@ -550,21 +550,22 @@ def _standardize_115_file(client, file_item, save_cid, raw_title, tmdb_id, media
         std_name = f"{safe_title} ({final_year}) {{tmdb={tmdb_id}}}" if final_year else f"{safe_title} {{tmdb={tmdb_id}}}"
 
         # ==================================================
-        # 2. 核心修复：区分 文件夹重命名 与 单文件归档
+        # 2. 核心修复：兼容 OpenAPI 和 WebAPI 键名
         # ==================================================
-        # 115 文件夹标识：ico == 'folder' 或者没有 fid (只有 cid)
-        is_directory = (file_item.get('ico') == 'folder') or (not file_item.get('fid'))
-        current_name = file_item.get('n')
+        fc_val = file_item.get('fc') if file_item.get('fc') is not None else file_item.get('type')
+        file_id = file_item.get('fid') or file_item.get('file_id')
+        
+        is_directory = (file_item.get('ico') == 'folder') or (not file_id) or (str(fc_val) == '0')
+        current_name = file_item.get('n') or file_item.get('fn') or file_item.get('file_name')
 
         if current_name == std_name:
             logger.info(f"  ✅ [整理] 名称已符合标准，跳过操作。")
             return
 
         if is_directory:
-            folder_id = file_item.get('cid')
+            folder_id = file_item.get('cid') or file_item.get('file_id')
             logger.info(f"  🛠️ [整理] 识别为文件夹，执行重命名: {current_name} -> {std_name}")
 
-            # 修复：将两个参数封装成一个元组传入
             rename_res = client.fs_rename((folder_id, std_name))
 
             if isinstance(rename_res, dict) and rename_res.get('state'):
@@ -574,17 +575,16 @@ def _standardize_115_file(client, file_item, save_cid, raw_title, tmdb_id, media
 
         else:
             # === 情况 B: 单文件归档 ===
-            file_id = file_item.get('fid')
             logger.info(f"  🛠️ [整理] 识别为单文件，正在归档至目录: {std_name}")
 
-            # 检查目标文件夹是否存在
             target_dir_cid = None
-            # 这里的 search 逻辑要小心，115 的搜索返回结构可能不同
             search_res = client.fs_files({'cid': save_cid, 'search_value': std_name, 'record_open_time': 0, 'count_folders': 0})
             if isinstance(search_res, dict) and search_res.get('data'):
                 for item in search_res['data']:
-                    if item.get('n') == std_name and (item.get('ico') == 'folder' or not item.get('fid')):
-                        target_dir_cid = item.get('cid')
+                    item_name = item.get('n') or item.get('fn') or item.get('file_name')
+                    item_fc = item.get('fc') if item.get('fc') is not None else item.get('type')
+                    if item_name == std_name and (item.get('ico') == 'folder' or str(item_fc) == '0'):
+                        target_dir_cid = item.get('cid') or item.get('file_id')
                         break
 
             if not target_dir_cid:
@@ -595,7 +595,6 @@ def _standardize_115_file(client, file_item, save_cid, raw_title, tmdb_id, media
                     logger.error(f"  ❌ [整理] 创建文件夹失败")
                     return
 
-            # 执行移动
             move_res = client.fs_move([file_id], target_dir_cid)
             if isinstance(move_res, dict) and move_res.get('state'):
                 logger.info(f"  ✅ [整理] 单文件已归档成功")
@@ -603,7 +602,6 @@ def _standardize_115_file(client, file_item, save_cid, raw_title, tmdb_id, media
                 logger.warning(f"  ⚠️ [整理] 移动文件失败")
 
     except Exception as e:
-        # 这里会捕获到 "not enough values to unpack" 并打印具体位置
         logger.error(f"  ⚠️ 标准化重命名流程异常: {e}", exc_info=True)
 
 def push_to_115(resource_link, title, tmdb_id=None, media_type=None):
@@ -617,7 +615,6 @@ def push_to_115(resource_link, title, tmdb_id=None, media_type=None):
     config = get_config()
     cookies = config.get('p115_cookies')
     
-    # 默认保存路径 (中转站)
     try:
         cid_val = config.get('p115_save_path_cid', 0)
         save_path_cid = int(cid_val) if cid_val else 0
@@ -630,23 +627,17 @@ def push_to_115(resource_link, title, tmdb_id=None, media_type=None):
     clean_url = _clean_link(resource_link)
     logger.info(f"  ➜ [NULLBR] 待处理链接: {clean_url}")
     
-    # ==================================================
-    # ★★★ 步骤 1: 建立目录快照 (用于捕获新文件) ★★★
-    # ==================================================
     existing_ids = set()
     try:
-        # 扫描前50个文件即可，通常新文件在最前
         files_res = client.fs_files({'cid': save_path_cid, 'limit': 50, 'o': 'user_ptime', 'asc': 0, 'record_open_time': 0, 'count_folders': 0})
         if files_res.get('data'):
             for item in files_res['data']:
-                item_id = item.get('fid') or item.get('cid') 
+                # 兼容 OpenAPI 键名
+                item_id = item.get('fid') or item.get('cid') or item.get('file_id')
                 if item_id: existing_ids.add(str(item_id))
     except Exception as e:
         logger.warning(f"  ⚠️ 获取目录快照失败: {e}")
 
-    # ==================================================
-    # ★★★ 步骤 2: 执行任务 (转存 或 离线) ★★★
-    # ==================================================
     target_domains = ['115.com', '115cdn.com', 'anxia.com']
     is_115_share = any(d in clean_url for d in target_domains) and ('magnet' not in clean_url)
     task_success = False
@@ -698,12 +689,8 @@ def push_to_115(resource_link, title, tmdb_id=None, media_type=None):
     except Exception as e:
         raise e
 
-    # ==================================================
-    # ★★★ 步骤 3: 扫描新文件并执行智能整理 ★★★
-    # ==================================================
     if task_success:
-        # 轮询查找新文件
-        max_retries = 8 # 稍微增加重试次数
+        max_retries = 8
         found_item = None
         
         for i in range(max_retries):
@@ -712,7 +699,8 @@ def push_to_115(resource_link, title, tmdb_id=None, media_type=None):
                 check_res = client.fs_files({'cid': save_path_cid, 'limit': 50, 'o': 'user_ptime', 'asc': 0, 'record_open_time': 0, 'count_folders': 0})
                 if check_res.get('data'):
                     for item in check_res['data']:
-                        current_id = item.get('fid') or item.get('cid')
+                        # 兼容 OpenAPI 键名
+                        current_id = item.get('fid') or item.get('cid') or item.get('file_id')
                         if current_id and (str(current_id) not in existing_ids):
                             found_item = item
                             break
@@ -722,25 +710,20 @@ def push_to_115(resource_link, title, tmdb_id=None, media_type=None):
                 logger.debug(f"轮询出错: {e}")
         
         if found_item:
-            item_name = found_item.get('n', '未知')
+            # 兼容 OpenAPI 键名
+            item_name = found_item.get('n') or found_item.get('fn') or found_item.get('file_name', '未知')
             logger.info(f"  👀 捕获到新入库项目: {item_name}")
             
-            # ★★★ 核心修改：调用智能整理 ★★★
             if tmdb_id:
                 try:
-                    # 检查是否开启了整理功能
                     enable_organize = config.get('enable_smart_organize', False)
                     
                     if enable_organize:
                         logger.info("  🧠 [整理] 智能整理已开启，开始分析...")
                         organizer = SmartOrganizer(client, tmdb_id, media_type, title)
                         target_cid = organizer.get_target_cid()
-                        
-                        # 无论是否命中规则，只要开启了整理，就执行重命名
-                        # 如果没命中规则，target_cid 为 None，则只重命名不移动
                         organizer.execute(found_item, target_cid)
                     else:
-                        # 旧逻辑：仅简单重命名
                         _standardize_115_file(client, found_item, save_path_cid, title, tmdb_id, media_type)
                         
                 except Exception as e:
@@ -755,7 +738,6 @@ def push_to_115(resource_link, title, tmdb_id=None, media_type=None):
                 return True
             else:
                 logger.warning("  ❌ 离线任务超时，未在目录发现新文件 (死链或下载过慢)")
-                # 磁力链可能需要很久，这里不报错，只是无法执行整理
                 return True
 
     return False

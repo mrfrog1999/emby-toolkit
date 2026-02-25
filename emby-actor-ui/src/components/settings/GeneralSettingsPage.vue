@@ -297,7 +297,7 @@
                           </n-button>
                         </n-space>
                         <n-text depth="3" style="font-size:0.8em;">
-                          用于扫描/创建/移动文件。强烈推荐！
+                          用于后台管理。
                         </n-text>
                       </n-space>
                     </n-form-item>
@@ -317,7 +317,7 @@
                           </n-button>
                         </n-space>
                         <n-text depth="3" style="font-size:0.8em;">
-                          用于获取播放直链。可解决部分 403 问题。
+                          用于反代302播放。
                         </n-text>
                       </n-space>
                     </n-form-item>
