@@ -322,15 +322,6 @@
                       </n-space>
                     </n-form-item>
 
-                    <n-form-item label="API 请求间隔 (秒)" path="p115_request_interval">
-                      <n-input-number v-model:value="configModel.p115_request_interval" :min="1" :step="0.5" placeholder="5.0" />
-                      <template #feedback>
-                        <n-text depth="3" style="font-size:0.8em;">
-                          115 官方对 API 调用频率有严格限制，建议保持 5 秒以上。
-                        </n-text>
-                      </template>
-                    </n-form-item>
-
                     <n-form-item label="ETK 内部访问地址" path="etk_server_url">
                         <n-input v-model:value="configModel.etk_server_url" placeholder="http://192.168.X.X:5257" />
                         <template #feedback>
