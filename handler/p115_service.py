@@ -1413,10 +1413,10 @@ def task_sync_115_directory_tree(processor=None):
     """
     主动同步 115 分类目录下的所有子目录到本地 DB 缓存。
     这能彻底解决 115 API search_value 失效导致的老目录无法识别问题。
+    ★ 终极版：支持自动清理本地已失效的旧目录缓存。
     """
     logger.info("=== 开始全量同步 115 目录树到本地数据库 ===")
     
-    # 局部导入 task_manager 用于向前端发送实时进度 (防止与 core.py 循环引用)
     try:
         import task_manager
     except ImportError:
@@ -1439,13 +1439,11 @@ def task_sync_115_directory_tree(processor=None):
     
     rules = json.loads(raw_rules) if isinstance(raw_rules, str) else raw_rules
     
-    # ★★★ 核心修改：使用字典存储 CID 和对应的易读名称 ★★★
     target_dirs = {}
     for rule in rules:
         if rule.get('enabled', True) and rule.get('cid'):
             cid_str = str(rule['cid'])
             if cid_str and cid_str != '0':
-                # 优先使用完整层级路径，其次是目录名，最后是规则名
                 display_name = rule.get('category_path') or rule.get('dir_name') or rule.get('name') or f"CID:{cid_str}"
                 target_dirs[cid_str] = display_name
 
@@ -1454,9 +1452,9 @@ def task_sync_115_directory_tree(processor=None):
         return
 
     total_cached = 0
+    total_cleaned = 0
     total_cids = len(target_dirs)
     
-    # ★★★ 遍历字典，获取 CID 和 名称 ★★★
     for idx, (cid, dir_name) in enumerate(target_dirs.items()):
         base_prog = int((idx / total_cids) * 100)
         update_progress(base_prog, f"  🔍 正在扫描第 {idx+1}/{total_cids} 个分类目录: [{dir_name}] ...")
@@ -1465,19 +1463,20 @@ def task_sync_115_directory_tree(processor=None):
         limit = 1000
         page_count = 0
         
+        # ★ 核心新增：记录本次从网盘真实扫到的所有子目录 ID
+        current_valid_sub_cids = set()
+        
         while True:
-            # 响应前端的中止任务按钮
             if processor and getattr(processor, 'is_stop_requested', lambda: False)():
                 update_progress(100, "任务已被用户手动终止。")
                 return
 
             try:
-                # 获取数据列表
                 res = client.fs_files({'cid': cid, 'limit': limit, 'offset': offset, 'record_open_time': 0, 'count_folders': 0})
                 data = res.get('data', [])
                 
                 if not data: 
-                    break # 本目录全空，跳出
+                    break
                 
                 page_count += 1
                 dir_count_in_page = 0
@@ -1490,6 +1489,9 @@ def task_sync_115_directory_tree(processor=None):
                                 sub_cid = item.get('fid') or item.get('file_id')
                                 sub_name = item.get('fn') or item.get('n') or item.get('file_name')
                                 if sub_cid and sub_name:
+                                    # 记录有效的子目录 ID
+                                    current_valid_sub_cids.add(str(sub_cid))
+                                    
                                     cursor.execute("""
                                         INSERT INTO p115_filesystem_cache (id, parent_id, name)
                                         VALUES (%s, %s, %s)
@@ -1500,10 +1502,8 @@ def task_sync_115_directory_tree(processor=None):
                                     dir_count_in_page += 1
                         conn.commit()
                 
-                # ★★★ 日志打印易读的目录名称 ★★★
                 update_progress(base_prog, f"  ➜ [{dir_name}] | 翻阅第 {page_count} 页 | 新增/更新 {dir_count_in_page} 个目录...")
                 
-                # 性能优化：如果获取的数据小于请求的上限，说明到底了，不用再请求下一页
                 if len(data) < limit:
                     break
                     
@@ -1511,9 +1511,35 @@ def task_sync_115_directory_tree(processor=None):
                 
             except Exception as e:
                 logger.error(f"  ❌ 同步目录树异常 [{dir_name}]: {e}")
-                break # 发生异常，跳过这个 CID 继续查下一个
+                break 
 
-    update_progress(100, f"=== 同步结束！共成功更新 {total_cached} 个目录的缓存 ===")
+        # =================================================================
+        # ★★★ 核心新增：清理本地数据库中多余的失效目录 ★★★
+        # =================================================================
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    # 1. 先查出本地数据库里，属于当前父目录(cid)的所有子目录 ID
+                    cursor.execute("SELECT id FROM p115_filesystem_cache WHERE parent_id = %s", (str(cid),))
+                    db_sub_cids = {row['id'] for row in cursor.fetchall()}
+                    
+                    # 2. 找出“在本地数据库里，但不在网盘真实列表里”的失效 ID
+                    invalid_cids = db_sub_cids - current_valid_sub_cids
+                    
+                    # 3. 执行删除
+                    if invalid_cids:
+                        # 转换成元组供 SQL IN 语句使用
+                        invalid_cids_tuple = tuple(invalid_cids)
+                        cursor.execute("DELETE FROM p115_filesystem_cache WHERE id IN %s", (invalid_cids_tuple,))
+                        conn.commit()
+                        
+                        cleaned_count = len(invalid_cids)
+                        total_cleaned += cleaned_count
+                        logger.info(f"  🧹 [{dir_name}] 清理了 {cleaned_count} 个已失效的本地目录缓存。")
+        except Exception as e:
+            logger.error(f"  ❌ 清理失效目录异常 [{dir_name}]: {e}")
+
+    update_progress(100, f"=== 同步结束！共更新 {total_cached} 个目录，清理 {total_cleaned} 个失效缓存 ===")
 
 def task_full_sync_strm_and_subs(processor=None):
     """
